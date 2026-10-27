@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en" data-vrnt="both" data-role="end" data-mode="1">
+
+<head>
+    <title>Simple Sing-Box | Subscription</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2338bdf8'><path d='M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5'/></svg>">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script>
+        function setLanguage(lang) {
+            if (lang !== 'ru' && lang !== 'en') lang = 'en';
+            document.documentElement.lang = lang;
+            window.location.hash = lang;
+            updateLangButton();
+            updateRoleDisplay();
+            fillNameInput();
+        }
+
+        function setLanguageFromHash() {
+            var hash = window.location.hash;
+            if (hash) {
+                var lang = hash.substring(1).toLowerCase();
+                if (lang === 'ru' || lang === 'en') {
+                    document.documentElement.lang = lang;
+                }
+            }
+            updateLangButton();
+        }
+
+        function toggleLanguage() {
+            var current = document.documentElement.lang || 'en';
+            setLanguage(current === 'ru' ? 'en' : 'ru');
+        }
+
+        function updateLangButton() {
+            var current = document.documentElement.lang || 'en';
+            var btn = document.getElementById('langToggleBtn');
+            if (btn) {
+                btn.textContent = current === 'ru' ? 'EN' : 'RU';
+            }
+        }
+
+        function getParameterByName(name) {
+            name = name.replace(/[\[\]]/g, "\\$&");
+            var regex = new RegExp("[?&]" + name + "(=([^&#]*)|&|#|$)");
+            var results = regex.exec(window.location.href);
+            if (!results || !results[2]) return '';
+            return decodeURIComponent(results[2].replace(/\+/g, " "));
+        }
+
+        function getUserName() {
+            var lang = document.documentElement.lang || 'en';
+            var el = document.getElementById('nameInput-' + lang);
+            return el ? el.value.trim() : '';
+        }
+
+        function fillNameInput() {
+            var name = getParameterByName('name');
+            if (name) {
+                var elRu = document.getElementById('nameInput-ru');
+                var elEn = document.getElementById('nameInput-en');
+                if (elRu) elRu.value = name;
+                if (elEn) elEn.value = name;
+                var badgeRu = document.getElementById('userBadgeRu');
+                var badgeEn = document.getElementById('userBadgeEn');
+                if (badgeRu) badgeRu.textContent = name;
+                if (badgeEn) badgeEn.textContent = name;
+                var bannerRu = document.getElementById('userBannerRu');
+                var bannerEn = document.getElementById('userBannerEn');
+                if (bannerRu) bannerRu.style.display = 'inline-flex';
+                if (bannerEn) bannerEn.style.display = 'inline-flex';
+            }
+        }
+
+        function getProfileUrl(proto) {
+            var name = getUserName();
+            if (!name) {
+                alert(document.documentElement.lang === 'ru' ? 'Пожалуйста, введите имя пользователя' : 'Please enter your username');
+                return null;
+            }
+            return "https://DOMAIN/SUBSCRIPTION-PATH/" + encodeURIComponent(name) + "-" + proto + "-CLIENT.json";
+        }
+
+        function openSingBoxUrl(proto) {
+            var rawUrl = getProfileUrl(proto);
+            if (!rawUrl) return;
+            var importUrl = "sing-box://import-remote-profile/?url=" + encodeURIComponent(rawUrl);
+            window.open(importUrl, '_blank', 'noopener,noreferrer');
+        }
+
+        function copyUrl(proto) {
+            var url = getProfileUrl(proto);
+            if (!url) return;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(url).then(function() {
+                    showToast(document.documentElement.lang === 'ru' ? 'Ссылка ' + proto + ' скопирована в буфер' : proto + ' URL copied to clipboard');
+                }).catch(function() {
+                    fallbackCopy(url);
+                });
+            } else {
+                fallbackCopy(url);
+            }
+        }
+
+        function fallbackCopy(text) {
+            var ta = document.createElement("textarea");
+            ta.value = text;
+            ta.style.position = "fixed";
+            ta.style.opacity = "0";
+            document.body.appendChild(ta);
+            ta.select();
+            try {
+                document.execCommand('copy');
+                showToast(document.documentElement.lang === 'ru' ? 'Ссылка скопирована' : 'Link copied');
+            } catch (err) {
+                prompt(document.documentElement.lang === 'ru' ? 'Скопируйте ссылку вручную:' : 'Copy link manually:', text);
+            }
+            document.body.removeChild(ta);
+        }
+
+        function downloadConfig(proto) {
+            var url = getProfileUrl(proto);
+            if (!url) return;
+            window.open(url, '_blank', 'noopener,noreferrer');
+        }
+
+        function showToast(msg) {
+            var t = document.getElementById('toast');
+            if (!t) return;
+            t.textContent = msg;
+            t.classList.add('show');
+            setTimeout(function() {
+                t.classList.remove('show');
+            }, 2600);
+        }
+
+        function updateRoleDisplay() {
+            var role = document.documentElement.getAttribute('data-role');
+            var mode = document.documentElement.getAttribute('data-mode');
+            var roleTextRu = "Конечный сервер";
+            var modeTextRu = "Полная маршрутизация";
+            var roleTextEn = "End Server";
+            var modeTextEn = "Full Routing";
+
+            if (role === 'middle') {
+                roleTextRu = "Промежуточный";
+                roleTextEn = "Intermediate";
+                if (mode === '1') {
+                    modeTextRu = "Весь трафик → следующий сервер";
+                    modeTextEn = "All traffic → next server";
+                } else if (mode === '2') {
+                    modeTextRu = "RU/SU/РФ → WARP, остальное → следующий";
+                    modeTextEn = "RU/SU/РФ → WARP, rest → next server";
+                } else if (mode === '3') {
+                    modeTextRu = "RU/SU/РФ → Direct клиента, остальное → следующий";
+                    modeTextEn = "RU/SU/РФ → Client Direct, rest → next";
+                }
+            }
+
+            var roleElRu = document.getElementById('roleDisplayRu');
+            var modeElRu = document.getElementById('modeDisplayRu');
+            var roleElEn = document.getElementById('roleDisplayEn');
+            var modeElEn = document.getElementById('modeDisplayEn');
+
+            if (roleElRu) roleElRu.textContent = roleTextRu;
+            if (modeElRu) modeElRu.textContent = modeTextRu;
+            if (roleElEn) roleElEn.textContent = roleTextEn;
+            if (modeElEn) modeElEn.textContent = modeTextEn;
+        }
+
+        document.addEventListener("DOMContentLoaded", function() {
+            setLanguageFromHash();
+            fillNameInput();
+            updateRoleDisplay();
+            updateLangButton();
+        });
+    </script>
+    <style>
+        :root {
+            --bg-base: #090b10;
+            --bg-surface: #0f131a;
+            --bg-elevated: #151a24;
+            --bg-hover: #1c2230;
+            --border-subtle: #1e2433;
+            --border-strong: #2d354a;
+            --border-accent: #38bdf8;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --cyan-accent: #38bdf8;
+            --cyan-glow: rgba(56, 189, 248, 0.15);
+            --emerald: #10b981;
+            --emerald-glow: rgba(16, 185, 129, 0.2);
+            --indigo: #6366f1;
+            --radius-sharp: 4px;
+            --radius-md: 6px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        [language] {
+            display: none;
+        }
+
+        html[lang="en"] [language="en"] {
+            display: block;
+        }
+
+        html[lang="ru"] [language="ru"] {
+            display: block;
+        }
+
+        html[data-vrnt="novless"] [variant="novless"] {
+            display: none !important;
+        }
+
+        html[data-role="middle"] .end-only {
+            display: none !important;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--bg-base);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px 16px;
+            line-height: 1.5;
+            background-image: 
+                radial-gradient(circle at 50% 0%, rgba(56, 189, 248, 0.05) 0%, transparent 60%),
+                linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+            background-size: 100% 100%, 32px 32px, 32px 32px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 480px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            box-shadow: 0 16px 36px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.03);
+            overflow: hidden;
+            position: relative;
+        }
+
+        .container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, #6366f1, #38bdf8, #10b981);
+        }
+
+        /* Top Header */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-subtle);
+            background: var(--bg-surface);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .brand-icon {
+            width: 28px;
+            height: 28px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-strong);
+            border-radius: var(--radius-sharp);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--cyan-accent);
+        }
+
+        .brand-icon svg {
+            width: 16px;
+            height: 16px;
+        }
+
+        .brand-title {
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-primary);
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: var(--emerald);
+            background: var(--emerald-glow);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            padding: 3px 8px;
+            border-radius: var(--radius-sharp);
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--emerald);
+            box-shadow: 0 0 6px var(--emerald);
+        }
+
+        .btn-lang {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-strong);
+            color: var(--text-secondary);
+            font-size: 11px;
+            font-weight: 700;
+            padding: 4px 10px;
+            border-radius: var(--radius-sharp);
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn-lang:hover {
+            color: var(--text-primary);
+            border-color: var(--cyan-accent);
+            background: var(--bg-hover);
+        }
+
+        /* Content Area */
+        .content {
+            padding: 22px 20px;
+        }
+
+        /* Server Metadata Card */
+        .meta-card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sharp);
+            padding: 12px 14px;
+            margin-bottom: 20px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .meta-item {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .meta-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+
+        .meta-value {
+            font-size: 13px;
+            color: var(--text-primary);
+            font-weight: 600;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* User badge banner */
+        .user-badge-banner {
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            background: var(--cyan-glow);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            border-radius: var(--radius-sharp);
+            padding: 8px 12px;
+            margin-bottom: 18px;
+            font-size: 12px;
+            color: var(--cyan-accent);
+        }
+
+        .user-badge-banner span {
+            font-weight: 700;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+            color: var(--text-primary);
+        }
+
+        /* Section Headings */
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+            margin-top: 18px;
+        }
+
+        .section-header:first-of-type {
+            margin-top: 0;
+        }
+
+        .section-number {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--cyan-accent);
+            background: rgba(56, 189, 248, 0.1);
+            border: 1px solid rgba(56, 189, 248, 0.25);
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: var(--radius-sharp);
+        }
+
+        .section-title {
+            font-size: 13px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-primary);
+        }
+
+        /* Input Block */
+        .input-group {
+            position: relative;
+            margin-bottom: 14px;
+        }
+
+        .input-text {
+            width: 100%;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-strong);
+            color: var(--text-primary);
+            font-size: 14px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+            padding: 10px 14px;
+            border-radius: var(--radius-sharp);
+            outline: none;
+            transition: all 0.15s ease;
+        }
+
+        .input-text:focus {
+            border-color: var(--cyan-accent);
+            box-shadow: 0 0 0 2px var(--cyan-glow);
+        }
+
+        .input-text::placeholder {
+            color: var(--text-muted);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-size: 13px;
+        }
+
+        /* Protocols / Actions Grid */
+        .protocol-card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sharp);
+            padding: 12px;
+            margin-bottom: 10px;
+            transition: border-color 0.15s ease;
+        }
+
+        .protocol-card:hover {
+            border-color: var(--border-strong);
+        }
+
+        .protocol-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .protocol-tag {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            padding: 2px 6px;
+            border-radius: var(--radius-sharp);
+        }
+
+        .tag-trj {
+            color: #a5b4fc;
+            background: rgba(99, 102, 241, 0.15);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+        }
+
+        .tag-vl {
+            color: #67e8f9;
+            background: rgba(6, 182, 212, 0.15);
+            border: 1px solid rgba(6, 182, 212, 0.3);
+        }
+
+        .protocol-desc {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .action-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr;
+            gap: 6px;
+        }
+
+        .btn-action {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 8px 10px;
+            border-radius: var(--radius-sharp);
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: all 0.15s ease;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+
+        .btn-primary {
+            background: #2563eb;
+            color: #ffffff;
+            border-color: #3b82f6;
+        }
+
+        .btn-primary:hover {
+            background: #1d4ed8;
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
+        }
+
+        .btn-secondary {
+            background: var(--bg-surface);
+            color: var(--text-secondary);
+            border-color: var(--border-strong);
+        }
+
+        .btn-secondary:hover {
+            color: var(--text-primary);
+            border-color: var(--cyan-accent);
+            background: var(--bg-hover);
+        }
+
+        /* App Download Cards */
+        .platforms-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .platform-box {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sharp);
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .platform-name {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .app-links {
+            display: flex;
+            gap: 4px;
+        }
+
+        .btn-app {
+            flex: 1;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 5px 4px;
+            text-align: center;
+            background: var(--bg-surface);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sharp);
+            text-decoration: none;
+            transition: all 0.15s ease;
+        }
+
+        .btn-app:hover {
+            color: var(--cyan-accent);
+            border-color: var(--border-strong);
+            background: var(--bg-hover);
+        }
+
+        /* Footer */
+        .footer {
+            padding: 14px 20px;
+            background: var(--bg-surface);
+            border-top: 1px solid var(--border-subtle);
+            font-size: 11px;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .footer a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+
+        .footer a:hover {
+            color: var(--cyan-accent);
+        }
+
+        /* Toast notification */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%) translateY(30px);
+            opacity: 0;
+            background: #1e293b;
+            color: #38bdf8;
+            border: 1px solid #38bdf8;
+            padding: 8px 16px;
+            border-radius: var(--radius-sharp);
+            font-size: 12px;
+            font-weight: 600;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+            pointer-events: none;
+            transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+            z-index: 1000;
+        }
+
+        .toast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        @media (max-width: 440px) {
+            .platforms-grid {
+                grid-template-columns: 1fr;
+            }
+            .action-row {
+                grid-template-columns: 1fr 1fr;
+            }
+            .action-row .btn-primary {
+                grid-column: span 2;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <!-- Top Header -->
+        <div class="header">
+            <div class="brand">
+                <div class="brand-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                        <polyline points="2 17 12 22 22 17"></polyline>
+                        <polyline points="2 12 12 17 22 12"></polyline>
+                    </svg>
+                </div>
+                <div class="brand-title">Simple Sing-Box</div>
+            </div>
+            <div class="header-actions">
+                <div class="status-pill">
+                    <div class="status-dot"></div>
+                    <span>Active</span>
+                </div>
+                <button id="langToggleBtn" class="btn-lang" onclick="toggleLanguage()">RU</button>
+            </div>
+        </div>
+
+        <div class="content">
+            <!-- RUSSIAN VIEW -->
+            <div language="ru">
+                <!-- Server info metadata -->
+                <div class="meta-card">
+                    <div class="meta-item">
+                        <span class="meta-label">Роль узла</span>
+                        <span class="meta-value" id="roleDisplayRu">Конечный</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Маршрутизация</span>
+                        <span class="meta-value" id="modeDisplayRu">Полная</span>
+                    </div>
+                </div>
+
+                <!-- Username banner if ?name= provided -->
+                <div id="userBannerRu" class="user-badge-banner">
+                    <div>Пользователь: <span id="userBadgeRu"></span></div>
+                    <div style="font-size: 11px; opacity: 0.8;">Готово к импорту</div>
+                </div>
+
+                <!-- Section: Import & Connection -->
+                <div class="end-only">
+                    <div class="section-header">
+                        <div class="section-number">1</div>
+                        <div class="section-title">Импорт профиля</div>
+                    </div>
+
+                    <form onsubmit="return false;">
+                        <div class="input-group">
+                            <input id="nameInput-ru" class="input-text" type="text" placeholder="Введите имя пользователя..." autocomplete="off" required>
+                        </div>
+
+                        <!-- Trojan Protocol Card -->
+                        <div class="protocol-card">
+                            <div class="protocol-head">
+                                <span class="protocol-tag tag-trj">Trojan</span>
+                                <span class="protocol-desc">TLS WS/HTTPUpgrade</span>
+                            </div>
+                            <div class="action-row">
+                                <button type="button" class="btn-action btn-primary" onclick="openSingBoxUrl('TRJ')">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                                    Sing-Box
+                                </button>
+                                <button type="button" class="btn-action btn-secondary" onclick="copyUrl('TRJ')">Копия</button>
+                                <button type="button" class="btn-action btn-secondary" onclick="downloadConfig('TRJ')">JSON</button>
+                            </div>
+                        </div>
+
+                        <!-- VLESS Protocol Card -->
+                        <div variant="novless" class="protocol-card">
+                            <div class="protocol-head">
+                                <span class="protocol-tag tag-vl">VLESS</span>
+                                <span class="protocol-desc">TLS WS/HTTPUpgrade</span>
+                            </div>
+                            <div class="action-row">
+                                <button type="button" class="btn-action btn-primary" onclick="openSingBoxUrl('VLESS')">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                                    Sing-Box
+                                </button>
+                                <button type="button" class="btn-action btn-secondary" onclick="copyUrl('VLESS')">Копия</button>
+                                <button type="button" class="btn-action btn-secondary" onclick="downloadConfig('VLESS')">JSON</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Section: Client Apps -->
+                <div class="section-header" style="margin-top: 22px;">
+                    <div class="section-number">2</div>
+                    <div class="section-title">Приложения для подключения</div>
+                </div>
+
+                <div class="platforms-grid">
+                    <div class="platform-box">
+                        <div class="platform-name">Android</div>
+                        <div class="app-links">
+                            <a class="btn-app" href="https://play.google.com/store/apps/details?id=io.nekohasekai.sfa" target="_blank" rel="noopener noreferrer">Sing-Box</a>
+                            <a class="btn-app" href="https://play.google.com/store/apps/details?id=app.hiddify.com" target="_blank" rel="noopener noreferrer">Hiddify</a>
+                        </div>
+                    </div>
+
+                    <div class="platform-box">
+                        <div class="platform-name">iOS / macOS</div>
+                        <div class="app-links">
+                            <a class="btn-app" href="https://apps.apple.com/us/app/sing-box-vt/id6673731168" target="_blank" rel="noopener noreferrer">Sing-Box</a>
+                            <a class="btn-app" href="https://apps.apple.com/us/app/hiddify-proxy-vpn/id6596777532" target="_blank" rel="noopener noreferrer">Hiddify</a>
+                        </div>
+                    </div>
+
+                    <div class="platform-box">
+                        <div class="platform-name">Windows</div>
+                        <div class="app-links">
+                            <a class="btn-app" href="https://github.com/hiddify/hiddify-app/releases/latest" target="_blank" rel="noopener noreferrer">Hiddify</a>
+                            <a class="btn-app" href="https://github.com/zipfo/Simple-Sing-Box/blob/main/.github/Sing-Box-Windows-ru.md" target="_blank" rel="noopener noreferrer">Инструкция</a>
+                        </div>
+                    </div>
+
+                    <div class="platform-box">
+                        <div class="platform-name">Linux</div>
+                        <div class="app-links">
+                            <a class="btn-app" href="https://github.com/hiddify/hiddify-app/releases/latest" target="_blank" rel="noopener noreferrer">Hiddify</a>
+                            <a class="btn-app" href="https://github.com/zipfo/Simple-Sing-Box/blob/main/.github/README.md#настройка-клиентов" target="_blank" rel="noopener noreferrer">Скрипт</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ENGLISH VIEW -->
+            <div language="en">
+                <!-- Server info metadata -->
+                <div class="meta-card">
+                    <div class="meta-item">
+                        <span class="meta-label">Node Role</span>
+                        <span class="meta-value" id="roleDisplayEn">End Server</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Routing</span>
+                        <span class="meta-value" id="modeDisplayEn">Full</span>
+                    </div>
+                </div>
+
+                <!-- Username banner if ?name= provided -->
+                <div id="userBannerEn" class="user-badge-banner">
+                    <div>User: <span id="userBadgeEn"></span></div>
+                    <div style="font-size: 11px; opacity: 0.8;">Ready to Import</div>
+                </div>
+
+                <!-- Section: Import & Connection -->
+                <div class="end-only">
+                    <div class="section-header">
+                        <div class="section-number">1</div>
+                        <div class="section-title">Import Profile</div>
+                    </div>
+
+                    <form onsubmit="return false;">
+                        <div class="input-group">
+                            <input id="nameInput-en" class="input-text" type="text" placeholder="Enter your username..." autocomplete="off" required>
+                        </div>
+
+                        <!-- Trojan Protocol Card -->
+                        <div class="protocol-card">
+                            <div class="protocol-head">
+                                <span class="protocol-tag tag-trj">Trojan</span>
+                                <span class="protocol-desc">TLS WS/HTTPUpgrade</span>
+                            </div>
+                            <div class="action-row">
+                                <button type="button" class="btn-action btn-primary" onclick="openSingBoxUrl('TRJ')">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                                    Sing-Box
+                                </button>
+                                <button type="button" class="btn-action btn-secondary" onclick="copyUrl('TRJ')">Copy</button>
+                                <button type="button" class="btn-action btn-secondary" onclick="downloadConfig('TRJ')">JSON</button>
+                            </div>
+                        </div>
+
+                        <!-- VLESS Protocol Card -->
+                        <div variant="novless" class="protocol-card">
+                            <div class="protocol-head">
+                                <span class="protocol-tag tag-vl">VLESS</span>
+                                <span class="protocol-desc">TLS WS/HTTPUpgrade</span>
+                            </div>
+                            <div class="action-row">
+                                <button type="button" class="btn-action btn-primary" onclick="openSingBoxUrl('VLESS')">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                                    Sing-Box
+                                </button>
+                                <button type="button" class="btn-action btn-secondary" onclick="copyUrl('VLESS')">Copy</button>
+                                <button type="button" class="btn-action btn-secondary" onclick="downloadConfig('VLESS')">JSON</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Section: Client Apps -->
+                <div class="section-header" style="margin-top: 22px;">
+                    <div class="section-number">2</div>
+                    <div class="section-title">Client Applications</div>
+                </div>
+
+                <div class="platforms-grid">
+                    <div class="platform-box">
+                        <div class="platform-name">Android</div>
+                        <div class="app-links">
+                            <a class="btn-app" href="https://play.google.com/store/apps/details?id=io.nekohasekai.sfa" target="_blank" rel="noopener noreferrer">Sing-Box</a>
+                            <a class="btn-app" href="https://play.google.com/store/apps/details?id=app.hiddify.com" target="_blank" rel="noopener noreferrer">Hiddify</a>
+                        </div>
+                    </div>
+
+                    <div class="platform-box">
+                        <div class="platform-name">iOS / macOS</div>
+                        <div class="app-links">
+                            <a class="btn-app" href="https://apps.apple.com/us/app/sing-box-vt/id6673731168" target="_blank" rel="noopener noreferrer">Sing-Box</a>
+                            <a class="btn-app" href="https://apps.apple.com/us/app/hiddify-proxy-vpn/id6596777532" target="_blank" rel="noopener noreferrer">Hiddify</a>
+                        </div>
+                    </div>
+
+                    <div class="platform-box">
+                        <div class="platform-name">Windows</div>
+                        <div class="app-links">
+                            <a class="btn-app" href="https://github.com/hiddify/hiddify-app/releases/latest" target="_blank" rel="noopener noreferrer">Hiddify</a>
+                            <a class="btn-app" href="https://github.com/zipfo/Simple-Sing-Box/blob/main/.github/Sing-Box-Windows-en.md" target="_blank" rel="noopener noreferrer">Guide</a>
+                        </div>
+                    </div>
+
+                    <div class="platform-box">
+                        <div class="platform-name">Linux</div>
+                        <div class="app-links">
+                            <a class="btn-app" href="https://github.com/hiddify/hiddify-app/releases/latest" target="_blank" rel="noopener noreferrer">Hiddify</a>
+                            <a class="btn-app" href="https://github.com/zipfo/Simple-Sing-Box/blob/main/.github/README-EN.md#client-setup" target="_blank" rel="noopener noreferrer">Script</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <span>Simple Sing-Box Node</span>
+            <a href="https://github.com/zipfo/Simple-Sing-Box" target="_blank" rel="noopener noreferrer">Documentation &rarr;</a>
+        </div>
+    </div>
+
+    <!-- Toast element -->
+    <div id="toast" class="toast"></div>
+</body>
+
+</html>

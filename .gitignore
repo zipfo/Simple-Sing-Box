@@ -1,0 +1,44 @@
+# Working directory (local development only)
+workspace/
+dev/
+tests/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE and tooling
+.vscode/
+.qwen/
+.idea/
+*.swp
+*.swo
+*~
+
+# AI agents, assistants & task trackers
+AGENTS.md
+AGENT_GUIDELINES.md
+odd/
+.odd/
+.claude/
+claude.md
+CLAUDE.md
+.claudeignore
+.opencode/
+opencode/
+.antigravity/
+antigravity/
+.gemini/
+.kilo/
+.kilocode/
+.cursor/
+.cursorrules
+.cursorignore
+.windsurf/
+.windsurfrules
+.cline/
+.clinerules
+.roo/
+.roomodes
+.aider*
+.copilot/

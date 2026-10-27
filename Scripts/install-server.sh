@@ -1,0 +1,2990 @@
+#!/bin/bash
+
+textcolor='\033[1;36m'
+textcolor_light='\033[1;37m'
+red='\033[1;31m'
+clear='\033[0m'
+
+check_os() {
+    if ! grep -q -e "bullseye" -e "bookworm" -e "trixie" -e "jammy" -e "noble" /etc/os-release
+    then
+        echo ""
+        echo -e "${red}Error: only Debian 11/12/13 and Ubuntu 22.04/24.04 are supported${clear}"
+        echo ""
+        exit 1
+    fi
+}
+
+check_root() {
+    if [[ $EUID -ne 0 ]]
+    then
+        echo ""
+        echo -e "${red}Error: this script should be run as root, use \"sudo -i\" command first${clear}"
+        echo ""
+        exit 1
+    fi
+}
+
+check_sbmanager() {
+    if [[ -f /usr/local/bin/sbmanager ]]
+    then
+        echo ""
+        echo -e "${red}Error: the script has already been run, no need to run it again${clear}"
+        echo ""
+        exit 1
+    fi
+}
+
+banner() {
+    echo ""
+    echo ""
+    echo "╔══╗ ╔═══ ╔══╗ ╦══╗ ╔═══ ══╦══"
+    echo "║    ║    ║    ║  ║ ║      ║  "
+    echo "╚══╗ ╠═══ ║    ╠╦═╝ ╠═══   ║  "
+    echo "   ║ ║    ║    ║╚╗  ║      ║  "
+    echo "╚══╝ ╚═══ ╚══╝ ╩ ╚═ ╚═══   ╩  "
+    echo ""
+    echo "╔══╗ ╦ ╦╗  ╦ ╔══╗    ╦══╗ ╔══╗ ═╗  ╔"
+    echo "║    ║ ║╚╗ ║ ║       ║  ║ ║  ║  ╚╗╔╝"
+    echo "╚══╗ ║ ║ ║ ║ ║ ═╗ ══ ╠══╣ ║  ║  ╔╬╝ "
+    echo "   ║ ║ ║ ╚╗║ ║  ║    ║  ║ ║  ║ ╔╝╚╗ "
+    echo "╚══╝ ╩ ╩  ╚╩ ╚══╝    ╩══╝ ╚══╝ ╝  ╚═"
+    echo ""
+    echo ""
+}
+
+enter_language() {
+    echo -e "${textcolor}Select the language:${clear}"
+    echo "1 - Russian"
+    echo "2 - English"
+    read -r language
+    [[ -n $language ]] && echo ""
+    echo ""
+
+    if [[ "$language" == "1" ]]
+    then
+        language="ru"
+    else
+        language="en"
+    fi
+}
+
+start_text_ru() {
+    echo -e "${red}ВНИМАНИЕ!${clear}"
+    echo "Запускайте скрипт на чистой системе"
+    echo ""
+    echo "Перед запуском скрипта нужно выполнить следующие действия:"
+    echo -e "1) Обновить систему на сервере командой ${textcolor}apt update -y && apt full-upgrade -y${clear}"
+    echo -e "2) Перезагрузить сервер командой ${textcolor}reboot${clear}"
+    echo ""
+    echo -e "Если это сделано, то нажмите ${textcolor}Enter${clear}, чтобы продолжить"
+    echo -e "В противном случае нажмите ${textcolor}Ctrl + C${clear} для завершения работы скрипта"
+    read -r big_red_button
+    [[ -n $big_red_button ]] && echo ""
+    echo ""
+}
+
+start_text_en() {
+    echo -e "${red}ATTENTION!${clear}"
+    echo "Run the script on a newly installed system"
+    echo ""
+    echo "Before running the script, it's necessary to do the following:"
+    echo -e "1) Update the system on the server (${textcolor}apt update -y && apt full-upgrade -y${clear})"
+    echo -e "2) Reboot the server (${textcolor}reboot${clear})"
+    echo ""
+    echo -e "If it's done, then press ${textcolor}Enter${clear} to continue"
+    echo -e "If not, then press ${textcolor}Ctrl + C${clear} to exit the script"
+    read -r big_red_button
+    [[ -n $big_red_button ]] && echo ""
+    echo ""
+}
+
+update_and_reboot() {
+    declare -A -g info_message=()
+    info_message[1_ru]="${textcolor}Обновление системы завершено${clear}"
+    info_message[2_ru]="${textcolor}Через минуту снова подключитесь к серверу по SSH и ещё раз запустите скрипт${clear}"
+    info_message[1_en]="${textcolor}The system update is complete${clear}"
+    info_message[2_en]="${textcolor}In a minute, reconnect to the server via SSH and run the script again${clear}"
+
+    if [[ "$system_updated" == "1" ]]
+    then
+        apt update -y && apt full-upgrade -y
+        sleep 1.5
+        echo ""
+        echo -e "${info_message[1_$language]}"
+        echo -e "${info_message[2_$language]}"
+        echo ""
+        reboot
+        exit 0
+    fi
+}
+
+get_ip() {
+    grep -q '^precedence \+::ffff:0:0/96 ' /etc/gai.conf &> /dev/null || echo "precedence ::ffff:0:0/96 100" >> /etc/gai.conf
+    server_ip=$(curl -s https://cloudflare.com/cdn-cgi/trace | grep "ip" | cut -d "=" -f 2)
+    [[ ! $server_ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] && server_ip=$(curl -s ipinfo.io/ip)
+    [[ ! $server_ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] && server_ip=$(curl -s 2ip.io)
+}
+
+crop_domain() {
+    domain=${domain#*"://"}
+    domain=${domain#"www."}
+    domain=$(echo "${domain}" | cut -d "/" -f 1 | sed 's/[[:blank:]]//g')
+}
+
+crop_redirect_domain() {
+    redirect=${redirect#*"://"}
+    redirect=${redirect#"www."}
+    redirect=$(echo "${redirect}" | cut -d "/" -f 1)
+}
+
+edit_index_path() {
+    [[ "$index_path" != "/"* ]] && index_path="/${index_path}"
+    index_path=${index_path%"/"}
+}
+
+get_test_response() {
+    test_domain=$(echo "${domain}" | rev | cut -d "." -f 1-2 | rev)
+
+    if [[ $cf_token =~ [A-Z] ]]
+    then
+        test_response=$(curl -s --request GET --url https://api.cloudflare.com/client/v4/zones --header "Authorization: Bearer ${cf_token}" --header "Content-Type: application/json")
+    else
+        test_response=$(curl -s --request GET --url https://api.cloudflare.com/client/v4/zones --header "X-Auth-Key: ${cf_token}" --header "X-Auth-Email: ${email}" --header "Content-Type: application/json")
+    fi
+}
+
+check_cf_token() {
+    declare -A -g check_message=()
+    check_message[1_ru]="Проверка домена, API токена/ключа и почты..."
+    check_message[2_ru]="${red}Ошибка: неправильно введён домен, API токен/ключ или почта${clear}"
+    check_message[3_ru]="${red}Инструкция: https://github.com/zipfo/Simple-Sing-Box/blob/main/.github/cf-settings-ru.md#получение-api-токена-cloudflare${clear}"
+    check_message[4_ru]="Успешно!"
+    check_message[1_en]="Checking domain name, API token/key and email..."
+    check_message[2_en]="${red}Error: invalid domain name, API token/key or email${clear}"
+    check_message[3_en]="${red}Instruction: https://github.com/zipfo/Simple-Sing-Box/blob/main/.github/cf-settings-en.md#getting-cloudflare-api-token${clear}"
+    check_message[4_en]="Success!"
+
+    echo "${check_message[1_$language]}"
+    get_test_response
+
+    while [[ $domain =~ ".." ]] || [[ ! $test_response =~ "\"$test_domain\"" ]] || [[ ! $test_response =~ "#dns_records:edit" ]] || [[ ! $test_response =~ "#dns_records:read" ]] || [[ ! $test_response =~ "#zone:read" ]]
+    do
+        echo ""
+        echo -e "${check_message[2_$language]}"
+        echo -e "${check_message[3_$language]}"
+        enter_domain_data
+        echo "${check_message[1_$language]}"
+        get_test_response
+    done
+
+    echo "${check_message[4_$language]}"
+    echo ""
+}
+
+check_trjpass() {
+    declare -A -g check_message=()
+    check_message[1_ru]="${red}Ошибка: пароль Trojan не должен содержать кавычки \"${clear}"
+    check_message[2_ru]="${textcolor}[?]${clear} Введите пароль для Trojan или оставьте пустым для генерации случайного пароля:"
+    check_message[1_en]="${red}Error: Trojan password should not contain quotes \"${clear}"
+    check_message[2_en]="${textcolor}[?]${clear} Enter your password for Trojan or leave this empty to generate a random password:"
+
+    while [[ $trjpass =~ '"' ]]
+    do
+        echo -e "${check_message[1_$language]}"
+        echo ""
+        echo -e "${check_message[2_$language]}"
+        read -r trjpass
+        [[ -n $trjpass ]] && echo ""
+    done
+}
+
+check_uuid() {
+    declare -A -g check_message=()
+    check_message[1_ru]="${red}Ошибка: введённое значение не является UUID${clear}"
+    check_message[2_ru]="${textcolor}[?]${clear} Введите UUID для VLESS или оставьте пустым для генерации случайного UUID:"
+    check_message[1_en]="${red}Error: this is not an UUID${clear}"
+    check_message[2_en]="${textcolor}[?]${clear} Enter your UUID for VLESS or leave this empty to generate a random UUID:"
+
+    while [[ ! $uuid =~ ^\{?[A-F0-9a-f]{8}-[A-F0-9a-f]{4}-[A-F0-9a-f]{4}-[A-F0-9a-f]{4}-[A-F0-9a-f]{12}\}?$ ]] && [[ -n $uuid ]]
+    do
+        echo -e "${check_message[1_$language]}"
+        echo ""
+        echo -e "${check_message[2_$language]}"
+        read -r uuid
+        [[ -n $uuid ]] && echo ""
+    done
+}
+
+check_trojan_path() {
+    declare -A -g check_message=()
+    check_message[1_ru]="${red}Ошибка: путь должен содержать только английские буквы, цифры, символы _ и -${clear}"
+    check_message[2_ru]="${textcolor}[?]${clear} Введите путь для Trojan или оставьте пустым для генерации случайного пути:"
+    check_message[1_en]="${red}Error: the path should contain only letters, numbers, _ and - symbols${clear}"
+    check_message[2_en]="${textcolor}[?]${clear} Enter your path for Trojan or leave this empty to generate a random path:"
+
+    while [[ ! $trojanpath =~ ^[a-zA-Z0-9_-]+$ ]] && [[ -n $trojanpath ]]
+    do
+        echo -e "${check_message[1_$language]}"
+        echo ""
+        echo -e "${check_message[2_$language]}"
+        read -r trojanpath
+        [[ -n $trojanpath ]] && echo ""
+        trojanpath=${trojanpath#"/"}
+    done
+}
+
+check_vless_path() {
+    declare -A -g check_message=()
+    check_message[1_ru]="${red}Ошибка: путь должен содержать только английские буквы, цифры, символы _ и -${clear}"
+    check_message[2_ru]="${red}Ошибка: пути для Trojan и VLESS должны быть разными${clear}"
+    check_message[3_ru]="${textcolor}[?]${clear} Введите путь для VLESS или оставьте пустым для генерации случайного пути:"
+    check_message[1_en]="${red}Error: the path should contain only letters, numbers, _ and - symbols${clear}"
+    check_message[2_en]="${red}Error: paths for Trojan and VLESS must be different${clear}"
+    check_message[3_en]="${textcolor}[?]${clear} Enter your path for VLESS or leave this empty to generate a random path:"
+
+    while ([[ ! $vlesspath =~ ^[a-zA-Z0-9_-]+$ ]] || [[ "$vlesspath" == "$trojanpath" ]]) && [[ -n $vlesspath ]]
+    do
+        if [[ ! $vlesspath =~ ^[a-zA-Z0-9_-]+$ ]]
+        then
+            echo -e "${check_message[1_$language]}"
+        else
+            echo -e "${check_message[2_$language]}"
+        fi
+        echo ""
+        echo -e "${check_message[3_$language]}"
+        read -r vlesspath
+        [[ -n $vlesspath ]] && echo ""
+        vlesspath=${vlesspath#"/"}
+    done
+}
+
+check_subscription_path() {
+    declare -A -g check_message=()
+    check_message[1_ru]="${red}Ошибка: путь должен содержать только английские буквы, цифры, символы _ и -${clear}"
+    check_message[2_ru]="${red}Ошибка: пути для Trojan, VLESS и подписки должны быть разными${clear}"
+    check_message[3_ru]="${textcolor}[?]${clear} Введите путь для подписки или оставьте пустым для генерации случайного пути:"
+    check_message[1_en]="${red}Error: the path should contain only letters, numbers, _ and - symbols${clear}"
+    check_message[2_en]="${red}Error: paths for Trojan, VLESS and subscription must be different${clear}"
+    check_message[3_en]="${textcolor}[?]${clear} Enter your subscription path or leave this empty to generate a random path:"
+
+    while ([[ ! $subspath =~ ^[a-zA-Z0-9_-]+$ ]] || [[ "$subspath" == "$trojanpath" ]] || [[ "$subspath" == "$vlesspath" ]]) && [[ -n $subspath ]]
+    do
+        if [[ ! $subspath =~ ^[a-zA-Z0-9_-]+$ ]]
+        then
+            echo -e "${check_message[1_$language]}"
+        else
+            echo -e "${check_message[2_$language]}"
+        fi
+        echo ""
+        echo -e "${check_message[3_$language]}"
+        read -r subspath
+        [[ -n $subspath ]] && echo ""
+        subspath=${subspath#"/"}
+    done
+}
+
+check_rulesetpath() {
+    declare -A -g check_message=()
+    check_message[1_ru]="${red}Ошибка: путь должен содержать только английские буквы, цифры, символы _ и -${clear}"
+    check_message[2_ru]="${red}Ошибка: пути для Trojan, VLESS, подписки и наборов правил должны быть разными${clear}"
+    check_message[3_ru]="${textcolor}[?]${clear} Введите путь для наборов правил (rule sets) или оставьте пустым для генерации случайного пути:"
+    check_message[1_en]="${red}Error: the path should contain only letters, numbers, _ and - symbols${clear}"
+    check_message[2_en]="${red}Error: paths for Trojan, VLESS, subscription and rule sets must be different${clear}"
+    check_message[3_en]="${textcolor}[?]${clear} Enter your path for rule sets or leave this empty to generate a random path:"
+
+    while ([[ ! $rulesetpath =~ ^[a-zA-Z0-9_-]+$ ]] || [[ "$rulesetpath" == "$trojanpath" ]] || [[ "$rulesetpath" == "$vlesspath" ]] || [[ "$rulesetpath" == "$subspath" ]]) && [[ -n $rulesetpath ]]
+    do
+        if [[ ! $rulesetpath =~ ^[a-zA-Z0-9_-]+$ ]]
+        then
+            echo -e "${check_message[1_$language]}"
+        else
+            echo -e "${check_message[2_$language]}"
+        fi
+        echo ""
+        echo -e "${check_message[3_$language]}"
+        read -r rulesetpath
+        [[ -n $rulesetpath ]] && echo ""
+        rulesetpath=${rulesetpath#"/"}
+    done
+}
+
+check_ssh_port() {
+    declare -A -g check_message=()
+    check_message[1_ru]="${red}Ошибка: номер порта должен быть целым положительным числом${clear}"
+    check_message[2_ru]="${red}Ошибка: номер порта не может быть больше 65535${clear}"
+    check_message[3_ru]="${red}Ошибка: порты 80, 443, 10443, 11443 и 40000 будут заняты${clear}"
+    check_message[4_ru]="${textcolor}[?]${clear} Введите новый номер порта SSH или 22 (рекомендуется номер более 1024):"
+    check_message[1_en]="${red}Error: the port number must be a positive integer${clear}"
+    check_message[2_en]="${red}Error: the port number can't be greater than 65535${clear}"
+    check_message[3_en]="${red}Error: the ports 80, 443, 10443, 11443 and 40000 will be taken${clear}"
+    check_message[4_en]="${textcolor}[?]${clear} Enter new SSH port number or 22 (number above 1024 is recommended):"
+
+    while [[ ! $ssh_port =~ ^[1-9][0-9]*$ ]] || [[ $ssh_port -gt 65535 ]] || [[ $ssh_port -eq 80 ]] || [[ $ssh_port -eq 443 ]] || [[ $ssh_port -eq 10443 ]] || [[ $ssh_port -eq 11443 ]] || [[ $ssh_port -eq 40000 ]]
+    do
+        if [[ -z $ssh_port ]]
+        then
+            :
+        elif [[ ! $ssh_port =~ ^[1-9][0-9]*$ ]]
+        then
+            echo -e "${check_message[1_$language]}"
+            echo ""
+        elif [[ $ssh_port -gt 65535 ]]
+        then
+            echo -e "${check_message[2_$language]}"
+            echo ""
+        else
+            echo -e "${check_message[3_$language]}"
+            echo ""
+        fi
+        echo -e "${check_message[4_$language]}"
+        read -r ssh_port
+        [[ -n $ssh_port ]] && echo ""
+    done
+}
+
+check_username() {
+    declare -A -g check_message=()
+    check_message[1_ru]="${red}Ошибка: имя пользователя должно содержать только английские строчные буквы, цифры, символы _ и -, а также начинаться со строчной буквы${clear}"
+    check_message[2_ru]="${textcolor}[?]${clear} Введите имя нового пользователя или root (рекомендуется не root):"
+    check_message[1_en]="${red}Error: the username should contain only lowercase letters, numbers, _ and - symbols, and must start with a lowercase letter${clear}"
+    check_message[2_en]="${textcolor}[?]${clear} Enter your username or root (non-root user is recommended):"
+
+    while [[ ! $username =~ ^[a-z][-a-z0-9_]*\$?$ ]]
+    do
+        if [[ -n $username ]]
+        then
+            echo -e "${check_message[1_$language]}"
+            echo ""
+        fi
+        echo -e "${check_message[2_$language]}"
+        read -r username
+        [[ -n $username ]] && echo ""
+    done
+}
+
+check_password() {
+    declare -A -g check_message=()
+    check_message[1_ru]="${red}Ошибка: пароль не должен содержать кавычки \"${clear}"
+    check_message[2_ru]="${textcolor}[?]${clear} Введите пароль SSH для нового пользователя (рекомендуется сложный пароль):"
+    check_message[1_en]="${red}Error: the password should not contain quotes \"${clear}"
+    check_message[2_en]="${textcolor}[?]${clear} Enter SSH password for the new user (a complex password is recommended):"
+
+    while [[ -z $password ]] || [[ $password =~ '"' ]]
+    do
+        if [[ -n $password ]]
+        then
+            echo -e "${check_message[1_$language]}"
+            echo ""
+        fi
+        echo -e "${check_message[2_$language]}"
+        read -r password
+        [[ -n $password ]] && echo ""
+    done
+}
+
+check_redirect_domain() {
+    declare -A -g check_message=()
+    check_message[1_ru]="${red}Ошибка: домен введён неправильно или не имеет HTTPS, выберите другой домен${clear}"
+    check_message[2_ru]="${textcolor}[?]${clear} Введите домен, на который будет идти перенаправление:"
+    check_message[1_en]="${red}Error: this domain is invalid or does not have HTTPS, select another domain${clear}"
+    check_message[2_en]="${textcolor}[?]${clear} Enter the domain to which requests will be redirected:"
+
+    while [[ -z $redirect ]] || [[ $(curl -s -o /dev/null -w "%{http_code}" "https://${redirect}") == "000" ]]
+    do
+        if [[ -n $redirect ]]
+        then
+            echo -e "${check_message[1_$language]}"
+            echo ""
+        fi
+        echo -e "${check_message[2_$language]}"
+        read -r redirect
+        [[ -n $redirect ]] && echo ""
+        crop_redirect_domain
+    done
+}
+
+check_site_link() {
+    declare -A -g check_message=()
+    check_message[1_ru]="${red}Ошибка: сайт недоступен по данной ссылке или не имеет HTTPS, выберите другой сайт${clear}"
+    check_message[2_ru]="${textcolor}[?]${clear} Введите ссылку на главную страницу выбранного сайта:"
+    check_message[1_en]="${red}Error: the website is not available or does not have HTTPS, select another website${clear}"
+    check_message[2_en]="${textcolor}[?]${clear} Enter the link to the main page of the selected website:"
+
+    apt install wget -y &> /dev/null
+
+    while [[ -z $site_link ]] || [[ $(curl -s -o /dev/null -w "%{http_code}" "https://${site_link}") == "000" ]] || ! wget -q -O /dev/null "https://${site_link}"
+    do
+        if [[ -n $site_link ]]
+        then
+            echo -e "${check_message[1_$language]}"
+            echo ""
+        fi
+        echo -e "${check_message[2_$language]}"
+        read -r site_link
+        [[ -n $site_link ]] && echo ""
+        site_link=${site_link#*"://"}
+    done
+}
+
+check_index_path() {
+    declare -A -g check_message=()
+    check_message[1_ru]="${red}Ошибка: файл"
+    check_message[2_ru]="не существует, проверьте, загружена ли папка вашего сайта в /root директорию сервера${clear}"
+    check_message[3_ru]="${textcolor}[?]${clear} Введите путь до index файла внутри папки вашего сайта (например, /site_folder/index.html):"
+    check_message[1_en]="${red}Error: the file"
+    check_message[2_en]="doesn't exist, check if the folder of your website is uploaded to the /root directory of the server${clear}"
+    check_message[3_en]="${textcolor}[?]${clear} Enter the path to the index file inside the folder of your website (e. g., /site_folder/index.html):"
+
+    while [[ -z $index_path ]] || [[ ! -f /root${index_path} ]]
+    do
+        if [[ -n $index_path ]]
+        then
+            echo -e "${check_message[1_$language]} /root${index_path} ${check_message[2_$language]}"
+            echo ""
+        fi
+        echo -e "${check_message[3_$language]}"
+        read -r index_path
+        [[ -n $index_path ]] && echo ""
+        edit_index_path
+    done
+}
+
+nginx_login() {
+    comment_1="#"; comment_2=""; comment_3=""
+    redirect="example.com"   # Dummy, will be commented
+    site_dir="html"
+    index="index.html index.htm"
+}
+
+nginx_redirect() {
+    declare -A -g input_message=()
+    input_message[1_ru]="${textcolor}[?]${clear} Введите домен, на который будет идти перенаправление:"
+    input_message[1_en]="${textcolor}[?]${clear} Enter the domain to which requests will be redirected:"
+
+    comment_1=""; comment_2="#"; comment_3=""
+    site_dir="html"
+    index="index.html index.htm"
+
+    echo -e "${input_message[1_$language]}"
+    read -r redirect
+    [[ -n $redirect ]] && echo ""
+    crop_redirect_domain
+    check_redirect_domain
+}
+
+nginx_copy_site() {
+    comment_1=""; comment_2=""; comment_3="#"
+    redirect="example.com"   # Dummy, will be commented
+
+    nginx_copy_site_text_ru() {
+        echo -e "${red}ВНИМАНИЕ!${clear}"
+        echo "Некоторые сайты могут содержать большие файлы или большое число страниц, которые могут занять много места на диске"
+        echo "Функционал некоторых сайтов может быть частично утрачен"
+        echo "Вы выбираете какой-либо сайт на свой страх и риск"
+        echo ""
+        echo -e "${textcolor}[?]${clear} Введите ссылку на главную страницу выбранного сайта:"
+        read -r site_link
+        [[ -n $site_link ]] && echo ""
+    }
+
+    nginx_copy_site_text_en() {
+        echo -e "${red}ATTENTION!${clear}"
+        echo "Some websites might contain large files or large number of pages, which may take a lot of disk space"
+        echo "Some websites may partially lose their functionality"
+        echo "You choose the website at your own risk"
+        echo ""
+        echo -e "${textcolor}[?]${clear} Enter the link to the main page of the selected website:"
+        read -r site_link
+        [[ -n $site_link ]] && echo ""
+    }
+
+    nginx_copy_site_text_${language}
+    site_link=${site_link#*"://"}
+    check_site_link
+}
+
+nginx_site() {
+    comment_1=""; comment_2=""; comment_3="#"
+    redirect="example.com"   # Dummy, will be commented
+
+    nginx_site_text_ru() {
+        echo -e "${red}ВНИМАНИЕ!${clear}"
+        echo -e "Сначала загрузите папку с файлами вашего сайта в ${textcolor}/root${clear} директорию сервера"
+        echo "Вы можете сделать это с помощью SFTP или SCP через другое окно, не прерывая работу скрипта"
+        echo ""
+        echo -e "${textcolor}[?]${clear} Введите путь до index файла внутри папки вашего сайта (например, /site_folder/index.html):"
+        read -r index_path
+        [[ -n $index_path ]] && echo ""
+    }
+
+    nginx_site_text_en() {
+        echo -e "${red}ATTENTION!${clear}"
+        echo -e "First, upload the folder with the contents of your website to the ${textcolor}/root${clear} directory of the server"
+        echo "You can do this via SFTP or SCP in another window without interrupting the script"
+        echo ""
+        echo -e "${textcolor}[?]${clear} Enter the path to the index file inside the folder of your website (e. g., /site_folder/index.html):"
+        read -r index_path
+        [[ -n $index_path ]] && echo ""
+    }
+
+    nginx_site_text_${language}
+    edit_index_path
+    check_index_path
+}
+
+nginx_template() {
+    comment_1=""; comment_2=""; comment_3="#"
+    redirect="example.com"   # Dummy, will be commented
+    site_dir="html"
+
+    local template_list_url="https://api.github.com/repos/zipfo/Simple-Sing-Box/contents/Web-Templates"
+    local template_names=()
+    local template_choice
+
+    echo -e "${textcolor_light}Загрузка списка шаблонов...${clear}" &>/dev/null
+
+    # Fetch template list from GitHub API
+    local api_response
+    api_response=$(curl -fsSL --connect-timeout 10 --max-time 30 "$template_list_url" 2>/dev/null)
+
+    if [[ -n "$api_response" ]]
+    then
+        while IFS= read -r name; do
+            [[ "$name" == *.html ]] && template_names+=("${name%.html}")
+        done < <(echo "$api_response" | jq -r '.[].name' 2>/dev/null)
+    fi
+
+    if [[ ${#template_names[@]} -eq 0 ]]
+    then
+        # Fallback if GitHub API is unavailable
+        template_names=(confluence nextcloud owncloud rocketchat seafile)
+    fi
+
+    if [[ "$language" == "ru" ]]
+    then
+        echo -e "${textcolor}[?]${clear} Выберите шаблон заглушки для 443 порта:"
+    else
+        echo -e "${textcolor}[?]${clear} Select a template for the 443 port front page:"
+    fi
+
+    local i=1
+    for t in "${template_names[@]}"
+    do
+        echo "$i - $t"
+        ((i++))
+    done
+
+    read -r template_choice
+    [[ -n $template_choice ]] && echo ""
+
+    # Validate choice
+    if [[ -z $template_choice ]] || [[ $template_choice -lt 1 ]] || [[ $template_choice -gt ${#template_names[@]} ]] 2>/dev/null
+    then
+        template_choice=1
+    fi
+
+    local selected_template="${template_names[$((template_choice-1))]}"
+    local template_url="https://raw.githubusercontent.com/zipfo/Simple-Sing-Box/main/Web-Templates/${selected_template}.html"
+
+    if [[ "$language" == "ru" ]]
+    then
+        echo -e "${textcolor_light}Загрузка шаблона ${selected_template}...${clear}"
+    else
+        echo -e "${textcolor_light}Downloading template ${selected_template}...${clear}"
+    fi
+
+    mkdir -p /var/www/html
+    if curl -fsSL --connect-timeout 10 --max-time 30 "$template_url" -o /var/www/html/index.html; then
+        index="index.html"
+        if [[ "$language" == "ru" ]]
+        then
+            echo -e "${textcolor_light}Шаблон ${selected_template} установлен${clear}"
+        else
+            echo -e "${textcolor_light}Template ${selected_template} installed${clear}"
+        fi
+    else
+        # Fallback: nginx_login behavior
+        index="index.html index.htm"
+        if [[ "$language" == "ru" ]]
+        then
+            echo -e "${red}Не удалось загрузить шаблон, будет использована страница по умолчанию${clear}"
+        else
+            echo -e "${red}Failed to download template, default page will be used${clear}"
+        fi
+    fi
+}
+
+nginx_options() {
+    case $option in
+        2)
+        nginx_redirect
+        ;;
+        3)
+        nginx_copy_site
+        ;;
+        4)
+        nginx_site
+        ;;
+        5)
+        nginx_template
+        ;;
+        *)
+        nginx_login
+    esac
+}
+
+enter_domain_data() {
+    declare -A -g input_message=()
+    input_message[1_ru]="${textcolor}[?]${clear} Введите ваш домен:"
+    input_message[2_ru]="${textcolor}[?]${clear} Введите вашу почту${email_text}:"
+    input_message[3_ru]="${textcolor}[?]${clear} Введите ваш API токен Cloudflare (Edit zone DNS) или Cloudflare global API key:"
+    input_message[1_en]="${textcolor}[?]${clear} Enter your domain name:"
+    input_message[2_en]="${textcolor}[?]${clear} Enter your email${email_text}:"
+    input_message[3_en]="${textcolor}[?]${clear} Enter your Cloudflare API token (Edit zone DNS) or Cloudflare global API key:"
+
+    domain=""; email=""; cf_token=""
+    echo ""
+    while [[ -z $domain ]]
+    do
+        echo -e "${input_message[1_$language]}"
+        read -r domain
+        [[ -n $domain ]] && echo ""
+    done
+    crop_domain
+    while [[ -z $email ]]
+    do
+        echo -e "${input_message[2_$language]}"
+        read -r email
+        [[ -n $email ]] && echo ""
+        email=$(echo "${email}" | sed 's/[[:blank:]]//g')
+    done
+    if [[ "$validation_type" == "1" ]]
+    then
+        while [[ -z $cf_token ]]
+        do
+            echo -e "${input_message[3_$language]}"
+            read -r cf_token
+            [[ -n $cf_token ]] && echo ""
+        done
+    fi
+}
+
+enter_data_ru() {
+    echo -e "${textcolor}[?]${clear} Вы точно обновили систему и перезагрузили сервер перед запуском скрипта?"
+    echo "1 - Обновить и перезагрузить сейчас"
+    echo "2 - Продолжить (система была обновлена и перезагружена)"
+    read -r system_updated
+    [[ -n $system_updated ]] && echo ""
+    update_and_reboot
+    echo -e "${textcolor}[?]${clear} Выберите метод валидации сертификатов:"
+    echo "1 - DNS Cloudflare (если ваш домен прикреплён к Cloudflare)"
+    echo "2 - Standalone (если ваш домен прикреплён к другому сервису)"
+    read -r validation_type
+    if [[ "$validation_type" == "1" ]]
+    then
+        email_text=", зарегистрированную на Cloudflare"
+        enter_domain_data
+        check_cf_token
+    else
+        email_text=" для выпуска сертификата"
+        [[ -n $validation_type ]] && echo ""
+        echo -e "${red}ВНИМАНИЕ!${clear}"
+        echo "Обязательно проверьте правильность написания домена"
+        enter_domain_data
+    fi
+    echo -e "${textcolor}[?]${clear} Выберите вариант настройки прокси:"
+    echo "1 - Терминирование TLS на NGINX, протоколы Trojan и VLESS, транспорт WebSocket или HTTPUpgrade"
+    echo "2 - Терминирование TLS на HAProxy, протокол Trojan, выбор бэкенда Sing-Box или NGINX по паролю Trojan"
+    read -r variant
+    [[ -n $variant ]] && echo ""
+    if [[ "$variant" == "1" ]]
+    then
+        echo -e "${textcolor}[?]${clear} Выберите транспорт:"
+        echo "1 - WebSocket"
+        echo "2 - HTTPUpgrade"
+        read -r transport
+        [[ -n $transport ]] && echo ""
+    fi
+    echo -e "${textcolor}[?]${clear} Выберите расположение сервера:"
+    echo "1 - Россия"
+    echo "2 - Другая страна"
+    read -r server_location
+    [[ -n $server_location ]] && echo ""
+    [[ "$server_location" != "1" ]] && server_location="other"
+    if [[ "$server_location" == "1" ]]
+    then
+        server_location="ru"
+        echo -e "${textcolor}[?]${clear} Нужна ли настройка WARP для обхода блокировок?"
+        echo "1 - Да (обязательно для сервера в России)"
+        echo "2 - Нет (прямое подключение)"
+        read -r warp_option
+        [[ -n $warp_option ]] && echo ""
+        if [[ "$warp_option" != "2" ]]
+        then
+            warp_option="1"
+            echo -e "${textcolor}[?]${clear} Выберите режим маршрутизации WARP:"
+            echo "1 - Полный WARP (весь трафик через WARP)"
+            echo "2 - Частичный WARP + Server Direct (Ru-blocked)"
+            echo "3 - Частичный WARP + Client Direct (Ru-blocked)"
+            echo "4 - Частичный WARP + Server Direct (RU/SU/РФ)"
+            echo "5 - Частичный WARP + Client Direct (RU/SU/РФ)"
+            read -r warp_mode
+            [[ -n $warp_mode ]] && echo ""
+            [[ ! "$warp_mode" =~ ^[1-5]$ ]] && warp_mode="1"
+        else
+            warp_option="2"
+            echo -e "${textcolor}[?]${clear} Выберите режим маршрутизации:"
+            echo "1 - Полная маршрутизация (весь трафик через сервер)"
+            echo "2 - Ru-blocked + Client Direct"
+            read -r warp_mode
+            [[ -n $warp_mode ]] && echo ""
+            [[ ! "$warp_mode" =~ ^[1-2]$ ]] && warp_mode="1"
+        fi
+    else
+        server_location="other"
+        echo -e "${textcolor}[?]${clear} Нужна ли настройка WARP?"
+        echo "1 - Да"
+        echo "2 - Нет (прямое подключение)"
+        read -r warp_option
+        [[ -n $warp_option ]] && echo ""
+        if [[ "$warp_option" != "2" ]]
+        then
+            warp_option="1"
+            echo -e "${textcolor}[?]${clear} Выберите режим маршрутизации WARP:"
+            echo "1 - Полный WARP (весь трафик через WARP)"
+            echo "2 - Частичный WARP (RU/SU/РФ) + Server Direct (Все остальное)"
+            echo "3 - Частичный WARP (все кроме RU/SU/РФ) + Client Direct (RU/SU/РФ)"
+            echo "4 - Частичный WARP (Ru-blocked) + Server Direct (Все остальное кроме RU/SU/РФ) + Client Direct (RU/SU/РФ)"
+            read -r warp_mode
+            [[ -n $warp_mode ]] && echo ""
+            [[ ! "$warp_mode" =~ ^[1-4]$ ]] && warp_mode="1"
+        else
+            warp_option="2"
+            echo -e "${textcolor}[?]${clear} Выберите режим маршрутизации:"
+            echo "1 - Полная маршрутизация (весь трафик через сервер)"
+            echo "2 - RU/SU/РФ + Client Direct"
+            read -r warp_mode
+            [[ -n $warp_mode ]] && echo ""
+            [[ ! "$warp_mode" =~ ^[1-2]$ ]] && warp_mode="1"
+        fi
+    fi
+    echo -e "${textcolor}[?]${clear} Выберите режим работы сервера:"
+    echo "1 - Конечный сервер (последний в цепочке или единственный)"
+    echo "2 - Промежуточный сервер (передаёт трафик на следующий сервер)"
+    read -r chain_role
+    [[ -n $chain_role ]] && echo ""
+    if [[ "$chain_role" == "2" ]]
+    then
+        chain_role="middle"
+        echo -e "${textcolor}[?]${clear} Выберите режим маршрутизации для промежуточного сервера:"
+        echo "1 - Весь трафик → следующий сервер"
+        echo "2 - RU/SU/РФ → WARP, остальное → следующий сервер"
+        echo "3 - RU/SU/РФ → Direct клиента, остальное → следующий сервер"
+        read -r middle_mode
+        [[ -n $middle_mode ]] && echo ""
+        [[ ! "$middle_mode" =~ ^[1-3]$ ]] && middle_mode="1"
+    else
+        chain_role="end"
+        middle_mode=""
+    fi
+    echo -e "${textcolor}[?]${clear} Выберите вариант настройки NGINX/HAProxy:"
+    echo "1 - Будет спрашивать логин и пароль вместо сайта, 401 Unauthorized"
+    echo "2 - Будет перенаправлять на другой домен, 301 Moved Permanently"
+    echo "3 - Скопировать чужой сайт на этот сервер, тестовая опция"
+    echo "4 - Загрузить свой сайт (при наличии), тестовая опция"
+    echo "5 - Выбрать шаблон заглушки из репозитория"
+    read -r option
+    [[ -n $option ]] && echo ""
+    nginx_options
+    echo -e "${textcolor}[?]${clear} Введите пароль для Trojan или оставьте пустым для генерации случайного пароля:"
+    read -r trjpass
+    [[ -n $trjpass ]] && echo ""
+    check_trjpass
+    if [[ "$variant" == "1" ]]
+    then
+        echo -e "${textcolor}[?]${clear} Введите путь для Trojan или оставьте пустым для генерации случайного пути:"
+        read -r trojanpath
+        [[ -n $trojanpath ]] && echo ""
+        trojanpath=${trojanpath#"/"}
+        check_trojan_path
+        echo -e "${textcolor}[?]${clear} Введите UUID для VLESS или оставьте пустым для генерации случайного UUID:"
+        read -r uuid
+        [[ -n $uuid ]] && echo ""
+        check_uuid
+        echo -e "${textcolor}[?]${clear} Введите путь для VLESS или оставьте пустым для генерации случайного пути:"
+        read -r vlesspath
+        [[ -n $vlesspath ]] && echo ""
+        vlesspath=${vlesspath#"/"}
+        check_vless_path
+    fi
+    echo -e "${textcolor}[?]${clear} Введите путь для подписки или оставьте пустым для генерации случайного пути:"
+    read -r subspath
+    [[ -n $subspath ]] && echo ""
+    subspath=${subspath#"/"}
+    check_subscription_path
+    echo -e "${textcolor}[?]${clear} Введите путь для наборов правил (rule sets) или оставьте пустым для генерации случайного пути:"
+    read -r rulesetpath
+    [[ -n $rulesetpath ]] && echo ""
+    rulesetpath=${rulesetpath#"/"}
+    check_rulesetpath
+    echo -e "${textcolor}[?]${clear} Нужна ли настройка безопасности (SSH, файрвол и unattended-upgrades)?"
+    echo "1 - Да (в редких случаях при нестандартных настройках у хостера можно потерять доступ к серверу)"
+    echo "2 - Нет (тогда рекомендуется выполнить настройку самостоятельно после завершения работы скрипта)"
+    read -r ssh_ufw
+    [[ -n $ssh_ufw ]] && echo ""
+    if [[ "$ssh_ufw" != "2" ]]
+    then
+        echo -e "${textcolor}[?]${clear} Введите новый номер порта SSH или 22 (рекомендуется номер более 1024):"
+        read -r ssh_port
+        [[ -n $ssh_port ]] && echo ""
+        check_ssh_port
+        echo -e "${textcolor}[?]${clear} Введите имя нового пользователя или root (рекомендуется не root):"
+        read -r username
+        [[ -n $username ]] && echo ""
+        check_username
+        echo -e "${textcolor}[?]${clear} Введите пароль SSH для нового пользователя (рекомендуется сложный пароль):"
+        read -r password
+        [[ -n $password ]] && echo ""
+        check_password
+    fi
+
+    echo -e "${textcolor}[?]${clear} Блокировать сети обнаружения (Роскомнадзор, ФСБ и т.д.)? (рекомендуется)"
+    echo "1 - Да (блокировать входящие соединения от сетей госорганов)"
+    echo "2 - Нет"
+    read -r blacklist_setup
+    [[ -n $blacklist_setup ]] && echo ""
+
+    echo ""
+    echo ""
+}
+
+enter_data_en() {
+    echo -e "${textcolor}[?]${clear} Are you sure you have updated the system and rebooted the server before running the script?"
+    echo "1 - Update and reboot now"
+    echo "2 - Continue (the system has been updated and rebooted)"
+    read -r system_updated
+    [[ -n $system_updated ]] && echo ""
+    update_and_reboot
+    echo -e "${textcolor}[?]${clear} Select a certificate validation method:"
+    echo "1 - DNS Cloudflare (if your domain is linked to Cloudflare)"
+    echo "2 - Standalone (if your domain is linked to another service)"
+    read -r validation_type
+    if [[ "$validation_type" == "1" ]]
+    then
+        email_text=" registered on Cloudflare"
+        enter_domain_data
+        check_cf_token
+    else
+        email_text=" to issue a certificate"
+        [[ -n $validation_type ]] && echo ""
+        echo -e "${red}ATTENTION!${clear}"
+        echo "Be sure to check the spelling of the domain name"
+        enter_domain_data
+    fi
+    echo -e "${textcolor}[?]${clear} Select a proxy setup option:"
+    echo "1 - TLS termination on NGINX, Trojan and VLESS protocols, WebSocket or HTTPUpgrade transport"
+    echo "2 - TLS termination on HAProxy, Trojan protocol, Sing-Box or NGINX backend selection based on Trojan passwords"
+    read -r variant
+    [[ -n $variant ]] && echo ""
+    if [[ "$variant" == "1" ]]
+    then
+        echo -e "${textcolor}[?]${clear} Select transport:"
+        echo "1 - WebSocket"
+        echo "2 - HTTPUpgrade"
+        read -r transport
+        [[ -n $transport ]] && echo ""
+    fi
+    echo -e "${textcolor}[?]${clear} Select server location:"
+    echo "1 - Russia"
+    echo "2 - Other country"
+    read -r server_location
+    [[ -n $server_location ]] && echo ""
+    [[ "$server_location" != "1" ]] && server_location="other"
+    if [[ "$server_location" == "1" ]]
+    then
+        server_location="ru"
+        echo -e "${textcolor}[?]${clear} Do you need WARP setup to bypass censorship?"
+        echo "1 - Yes (required for server in Russia)"
+        echo "2 - No (direct connection)"
+        read -r warp_option
+        [[ -n $warp_option ]] && echo ""
+        if [[ "$warp_option" != "2" ]]
+        then
+            warp_option="1"
+            echo -e "${textcolor}[?]${clear} Select WARP routing mode:"
+            echo "1 - Full WARP (all traffic through WARP)"
+            echo "2 - Partial WARP + Server Direct (Ru-blocked)"
+            echo "3 - Partial WARP + Client Direct (Ru-blocked)"
+            echo "4 - Partial WARP + Server Direct (RU/SU/РФ)"
+            echo "5 - Partial WARP + Client Direct (RU/SU/РФ)"
+            read -r warp_mode
+            [[ -n $warp_mode ]] && echo ""
+            [[ ! "$warp_mode" =~ ^[1-5]$ ]] && warp_mode="1"
+        else
+            warp_option="2"
+            echo -e "${textcolor}[?]${clear} Select routing mode:"
+            echo "1 - Full routing (all traffic through server)"
+            echo "2 - Ru-blocked + Client Direct"
+            read -r warp_mode
+            [[ -n $warp_mode ]] && echo ""
+            [[ ! "$warp_mode" =~ ^[1-2]$ ]] && warp_mode="1"
+        fi
+    else
+        server_location="other"
+        echo -e "${textcolor}[?]${clear} Do you need WARP setup?"
+        echo "1 - Yes"
+        echo "2 - No (direct connection)"
+        read -r warp_option
+        [[ -n $warp_option ]] && echo ""
+        if [[ "$warp_option" != "2" ]]
+        then
+            warp_option="1"
+            echo -e "${textcolor}[?]${clear} Select WARP routing mode:"
+            echo "1 - Full WARP (all traffic through WARP)"
+            echo "2 - Partial WARP (RU/SU/РФ) + Server Direct (Everything else)"
+            echo "3 - Partial WARP (everything except RU/SU/РФ) + Client Direct (RU/SU/РФ)"
+            echo "4 - Partial WARP (Ru-blocked) + Server Direct (Everything except RU/SU/РФ) + Client Direct (RU/SU/РФ)"
+            read -r warp_mode
+            [[ -n $warp_mode ]] && echo ""
+            [[ ! "$warp_mode" =~ ^[1-4]$ ]] && warp_mode="1"
+        else
+            warp_option="2"
+            echo -e "${textcolor}[?]${clear} Select routing mode:"
+            echo "1 - Full routing (all traffic through server)"
+            echo "2 - RU/SU/РФ + Client Direct"
+            read -r warp_mode
+            [[ -n $warp_mode ]] && echo ""
+            [[ ! "$warp_mode" =~ ^[1-2]$ ]] && warp_mode="1"
+        fi
+    fi
+    echo -e "${textcolor}[?]${clear} Select server role:"
+    echo "1 - End server (last in chain or standalone)"
+    echo "2 - Intermediate server (forwards traffic to next server)"
+    read -r chain_role
+    [[ -n $chain_role ]] && echo ""
+    if [[ "$chain_role" == "2" ]]
+    then
+        chain_role="middle"
+        echo -e "${textcolor}[?]${clear} Select routing mode for intermediate server:"
+        echo "1 - All traffic → next server"
+        echo "2 - RU/SU/РФ → WARP, everything else → next server"
+        echo "3 - RU/SU/РФ → Client Direct, everything else → next server"
+        read -r middle_mode
+        [[ -n $middle_mode ]] && echo ""
+        [[ ! "$middle_mode" =~ ^[1-3]$ ]] && middle_mode="1"
+    else
+        chain_role="end"
+        middle_mode=""
+    fi
+    echo -e "${textcolor}[?]${clear} Select NGINX/HAProxy setup option:"
+    echo "1 - Will show a login popup asking for username and password, 401 Unauthorized"
+    echo "2 - Will redirect to another domain, 301 Moved Permanently"
+    echo "3 - Copy someone else's website to this server, experimental option"
+    echo "4 - Upload your own website (if you have one), experimental option"
+    echo "5 - Select a front page template from the repository"
+    read -r option
+    [[ -n $option ]] && echo ""
+    nginx_options
+    echo -e "${textcolor}[?]${clear} Enter your password for Trojan or leave this empty to generate a random password:"
+    read -r trjpass
+    [[ -n $trjpass ]] && echo ""
+    check_trjpass
+    if [[ "$variant" == "1" ]]
+    then
+        echo -e "${textcolor}[?]${clear} Enter your path for Trojan or leave this empty to generate a random path:"
+        read -r trojanpath
+        [[ -n $trojanpath ]] && echo ""
+        trojanpath=${trojanpath#"/"}
+        check_trojan_path
+        echo -e "${textcolor}[?]${clear} Enter your UUID for VLESS or leave this empty to generate a random UUID:"
+        read -r uuid
+        [[ -n $uuid ]] && echo ""
+        check_uuid
+        echo -e "${textcolor}[?]${clear} Enter your path for VLESS or leave this empty to generate a random path:"
+        read -r vlesspath
+        [[ -n $vlesspath ]] && echo ""
+        vlesspath=${vlesspath#"/"}
+        check_vless_path
+    fi
+    echo -e "${textcolor}[?]${clear} Enter your subscription path or leave this empty to generate a random path:"
+    read -r subspath
+    [[ -n $subspath ]] && echo ""
+    subspath=${subspath#"/"}
+    check_subscription_path
+    echo -e "${textcolor}[?]${clear} Enter your path for rule sets or leave this empty to generate a random path:"
+    read -r rulesetpath
+    [[ -n $rulesetpath ]] && echo ""
+    rulesetpath=${rulesetpath#"/"}
+    check_rulesetpath
+    echo -e "${textcolor}[?]${clear} Do you need security setup (SSH, firewall and unattended-upgrades)?"
+    echo "1 - Yes (in rare cases of hoster's non-standard settings, access to the server might be lost)"
+    echo "2 - No (then it is recommended to perform the setup manually after the script finishes running)"
+    read -r ssh_ufw
+    [[ -n $ssh_ufw ]] && echo ""
+    if [[ "$ssh_ufw" != "2" ]]
+    then
+        echo -e "${textcolor}[?]${clear} Enter new SSH port number or 22 (number above 1024 is recommended):"
+        read -r ssh_port
+        [[ -n $ssh_port ]] && echo ""
+        check_ssh_port
+        echo -e "${textcolor}[?]${clear} Enter your username or root (non-root user is recommended):"
+        read -r username
+        [[ -n $username ]] && echo ""
+        check_username
+        echo -e "${textcolor}[?]${clear} Enter SSH password for the new user (a complex password is recommended):"
+        read -r password
+        [[ -n $password ]] && echo ""
+        check_password
+    fi
+
+    echo -e "${textcolor}[?]${clear} Block detection networks (Roskomnadzor, FSB, etc.)? (recommended)"
+    echo "1 - Yes (block incoming connections from government agency networks)"
+    echo "2 - No"
+    read -r blacklist_setup
+    [[ -n $blacklist_setup ]] && echo ""
+
+    echo ""
+    echo ""
+}
+
+enable_bbr() {
+    declare -A -g info_message=()
+    info_message[1_ru]="${textcolor_light}Настройка BBR...${clear}"
+    info_message[1_en]="${textcolor_light}Setting up BBR...${clear}"
+
+    echo -e "${info_message[1_$language]}"
+    echo "net.core.default_qdisc = fq" >> /etc/sysctl.d/99-ssb.conf
+    echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.d/99-ssb.conf
+    sysctl --system &> /dev/null
+    sysctl net.core.default_qdisc net.ipv4.tcp_congestion_control
+    echo ""
+}
+
+downgrade_nasty_warp() {
+    # Because some WARP releases are buggy...
+    warp_version="2025.6.1335.0"
+    proc_arch="amd64"
+    [[ $(uname -m) == "aarch64" || $(uname -m) == "arm64" ]] && proc_arch="arm64"
+    wget -q https://pkg.cloudflareclient.com/pool/${os_codename}/main/c/cloudflare-warp/cloudflare-warp_${warp_version}_${proc_arch}.deb
+
+    if [[ $? -eq 0 ]]
+    then
+        dpkg -i cloudflare-warp_${warp_version}_${proc_arch}.deb
+        rm -f ./cloudflare-warp_${warp_version}_${proc_arch}.deb
+        apt-mark hold cloudflare-warp
+    fi
+}
+
+install_warp_cli() {
+    # Legacy WARP backend, installed only as a fallback when usque cannot be set up.
+    if command -v warp-cli > /dev/null 2>&1
+    then
+        return 0
+    fi
+
+    [[ -z $os_codename ]] && os_codename=$(grep "VERSION_CODENAME=" /etc/os-release | cut -d "=" -f 2)
+    [[ ! -d /usr/share/keyrings ]] && mkdir -p /usr/share/keyrings
+    curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+    gpg --dry-run --quiet --no-keyring --import --import-options import-show /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+    echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ ${os_codename} main" | tee /etc/apt/sources.list.d/cloudflare-client.list
+    apt-get update -y && apt-get install cloudflare-warp -y
+    #downgrade_nasty_warp
+}
+
+usque_release_arch() {
+    case $(uname -m) in
+        x86_64)
+            echo "amd64"
+            ;;
+        aarch64|arm64)
+            echo "arm64"
+            ;;
+        armv7l|armv7)
+            echo "armv7"
+            ;;
+        armv6l|armv6)
+            echo "armv6"
+            ;;
+        armv5l|armv5)
+            echo "armv5"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+warpscout_release_arch() {
+    case $(uname -m) in
+        x86_64)
+            echo "amd64"
+            ;;
+        aarch64|arm64)
+            echo "arm64"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+install_usque_binaries() {
+    declare -A -g info_message=()
+    info_message[1_ru]="${textcolor_light}Установка usque и warpscout...${clear}"
+    info_message[1_en]="${textcolor_light}Installing usque and warpscout...${clear}"
+
+    echo -e "${info_message[1_$language]}"
+
+    local usque_arch warpscout_arch usque_tag usque_version warpscout_tag warpscout_version
+    local tmp_dir expected_sum actual_sum
+
+    usque_arch=$(usque_release_arch)
+    warpscout_arch=$(warpscout_release_arch)
+    if [[ -z $usque_arch || -z $warpscout_arch ]]
+    then
+        echo -e "${red}Unsupported CPU architecture for usque/warpscout: $(uname -m)${clear}"
+        return 1
+    fi
+
+    tmp_dir=$(mktemp -d)
+    [[ -z $tmp_dir ]] && return 1
+
+    usque_tag=$(curl -fsSL --retry 3 https://api.github.com/repos/Diniboy1123/usque/releases/latest | jq -r '.tag_name // empty')
+    if [[ -z $usque_tag ]]
+    then
+        echo -e "${red}Could not resolve the latest usque release${clear}"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    usque_version=${usque_tag#v}
+
+    if ! curl -fsSL --retry 3 -o "$tmp_dir/usque.zip" "https://github.com/Diniboy1123/usque/releases/download/${usque_tag}/usque_${usque_version}_linux_${usque_arch}.zip" ||
+       ! curl -fsSL --retry 3 -o "$tmp_dir/checksums.txt" "https://github.com/Diniboy1123/usque/releases/download/${usque_tag}/checksums.txt"
+    then
+        echo -e "${red}Failed to download usque ${usque_version}${clear}"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    expected_sum=$(grep " usque_${usque_version}_linux_${usque_arch}.zip$" "$tmp_dir/checksums.txt" | awk '{print $1}')
+    actual_sum=$(sha256sum "$tmp_dir/usque.zip" | awk '{print $1}')
+    if [[ -z $expected_sum || "$expected_sum" != "$actual_sum" ]]
+    then
+        echo -e "${red}usque checksum verification failed${clear}"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    if ! unzip -o -q "$tmp_dir/usque.zip" -d "$tmp_dir" || ! install -m 755 "$tmp_dir/usque" /usr/local/bin/usque
+    then
+        echo -e "${red}Failed to install the usque binary${clear}"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    warpscout_tag=$(curl -fsSL --retry 3 https://api.github.com/repos/vernette/warpscout/releases/latest | jq -r '.tag_name // empty')
+    if [[ -z $warpscout_tag ]]
+    then
+        echo -e "${red}Could not resolve the latest warpscout release${clear}"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    warpscout_version=${warpscout_tag#v}
+
+    if ! curl -fsSL --retry 3 -o "$tmp_dir/warpscout.tar.gz" "https://github.com/vernette/warpscout/releases/download/${warpscout_tag}/warpscout_${warpscout_version}_linux_${warpscout_arch}.tar.gz" ||
+       ! tar -xzf "$tmp_dir/warpscout.tar.gz" -C "$tmp_dir" warpscout ||
+       ! install -m 755 "$tmp_dir/warpscout" /usr/local/bin/warpscout
+    then
+        echo -e "${red}Failed to install warpscout ${warpscout_version}${clear}"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    rm -rf "$tmp_dir"
+    echo "  usque ${usque_version}, warpscout ${warpscout_version}"
+    echo ""
+}
+
+usque_warp_register() {
+    declare -A -g info_message=()
+    info_message[1_ru]="${textcolor_light}Регистрация WARP-аккаунта (warpscout)...${clear}"
+    info_message[1_en]="${textcolor_light}Registering the WARP account (warpscout)...${clear}"
+
+    echo -e "${info_message[1_$language]}"
+
+    mkdir -p /etc/warpscout /etc/usque
+    chmod 700 /etc/warpscout /etc/usque
+
+    if [[ ! -s /etc/warpscout/account.json ]] || ! jq -e '.masque' /etc/warpscout/account.json > /dev/null 2>&1
+    then
+        timeout 180 warpscout register -a /etc/warpscout/account.json > /dev/null 2>&1
+    fi
+
+    chmod 600 /etc/warpscout/account.json 2>/dev/null
+
+    if ! jq -e '.masque' /etc/warpscout/account.json > /dev/null 2>&1
+    then
+        echo -e "${red}Could not register a MASQUE device with Cloudflare${clear}"
+        return 1
+    fi
+
+    echo ""
+}
+
+usque_warp_scan() {
+    declare -A -g info_message=()
+    info_message[1_ru]="${textcolor_light}Поиск оптимального MASQUE endpoint (может занять несколько минут)...${clear}"
+    info_message[1_en]="${textcolor_light}Scanning for the best MASQUE endpoint (this may take a few minutes)...${clear}"
+    info_message[2_ru]="${textcolor_light}Endpoint не найден, подбираем SNI (может занять больше времени)...${clear}"
+    info_message[2_en]="${textcolor_light}No endpoint found, searching for a working SNI (this can take longer)...${clear}"
+
+    echo -e "${info_message[1_$language]}"
+
+    local endpoint sni_cmd sni=""
+    local -a scan_cmd
+
+    scan_cmd=(timeout 900 warpscout scan -p masque-h2 -P -a /etc/warpscout/account.json -best -conf /etc/usque/config.json -plain)
+    endpoint=$("${scan_cmd[@]}" 2> /dev/null | tail -n 1 | tr -d '[:space:]')
+
+    if [[ -z $endpoint ]]
+    then
+        echo -e "${info_message[2_$language]}"
+        sni_cmd=$(timeout 1200 warpscout find-sni -p masque-h2 -a /etc/warpscout/account.json -plain 2> /dev/null | tail -n 1)
+        sni=$(sed -n 's/.*-masque-sni[ =]\([^ ]*\).*/\1/p' <<< "$sni_cmd")
+
+        if [[ -n $sni_cmd ]]
+        then
+            scan_cmd=(timeout 900 warpscout scan -p masque-h2 -P -a /etc/warpscout/account.json -best -conf /etc/usque/config.json -plain)
+            [[ -n $sni ]] && scan_cmd+=(-masque-sni "$sni")
+            endpoint=$("${scan_cmd[@]}" 2> /dev/null | tail -n 1 | tr -d '[:space:]')
+        fi
+    fi
+
+    if [[ -z $endpoint || ! -s /etc/usque/config.json ]]
+    then
+        echo -e "${red}No working MASQUE endpoint found${clear}"
+        return 1
+    fi
+
+    usque_port=${endpoint##*:}
+    if [[ ! $usque_port =~ ^[0-9]+$ ]]
+    then
+        echo -e "${red}Could not parse the MASQUE port from ${endpoint}${clear}"
+        return 1
+    fi
+
+    usque_endpoint=$endpoint
+    usque_sni=$sni
+    chmod 600 /etc/usque/config.json
+
+    echo "  endpoint: ${usque_endpoint}, MASQUE port: ${usque_port}"
+    [[ -n $usque_sni ]] && echo "  SNI: ${usque_sni}"
+    echo ""
+}
+
+usque_warp_create_service() {
+    local sni_arg=""
+    [[ -n $usque_sni ]] && sni_arg="-s ${usque_sni} "
+
+    cat > /etc/systemd/system/usque-warp.service <<EOF
+[Unit]
+Description=usque WARP (MASQUE HTTP/2 over TCP) SOCKS5 proxy
+Documentation=https://github.com/Diniboy1123/usque
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/usque socks -c /etc/usque/config.json -b 127.0.0.1 -p 40000 -P ${usque_port} ${sni_arg}--http2
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable usque-warp.service > /dev/null 2>&1
+}
+
+usque_warp_wait_ready() {
+    local i trace
+
+    for i in {1..30}
+    do
+        ss -ltn 2> /dev/null | grep -q "127.0.0.1:40000" && break
+        sleep 1
+    done
+
+    ss -ltn 2> /dev/null | grep -q "127.0.0.1:40000" || return 1
+
+    for i in {1..3}
+    do
+        trace=$(curl -s --max-time 20 --socks5-hostname 127.0.0.1:40000 https://cloudflare.com/cdn-cgi/trace 2> /dev/null)
+        [[ "$trace" == *"warp=on"* ]] && return 0
+        sleep 3
+    done
+
+    return 1
+}
+
+setup_warp_usque() {
+    install_usque_binaries || return 1
+    usque_warp_register || return 1
+    usque_warp_scan || return 1
+
+    systemctl stop usque-warp.service > /dev/null 2>&1
+    usque_warp_create_service || return 1
+    systemctl restart usque-warp.service || return 1
+
+    if ! usque_warp_wait_ready
+    then
+        echo ""
+        journalctl -u usque-warp.service -n 15 --no-pager 2> /dev/null
+        systemctl stop usque-warp.service > /dev/null 2>&1
+        return 1
+    fi
+
+    return 0
+}
+
+setup_warp_cli() {
+    warp-cli -V
+    echo ""
+    yes | warp-cli registration new
+    warp-cli mode proxy
+    warp-cli proxy port 40000
+    warp-cli connect
+    mkdir -p /etc/systemd/system/warp-svc.service.d
+    echo -e "[Service]\nLogLevelMax=3\nCPUQuota=20%\nMemoryHigh=128M" >> /etc/systemd/system/warp-svc.service.d/override.conf
+    systemctl daemon-reload
+    systemctl restart warp-svc.service
+    systemctl enable warp-svc.service
+}
+
+install_packages() {
+    declare -A -g info_message=()
+    info_message[1_ru]="${textcolor_light}Установка необходимых пакетов...${clear}"
+    info_message[1_en]="${textcolor_light}Installing the required packages...${clear}"
+
+    echo -e "${info_message[1_$language]}"
+    apt install sudo coreutils nano wget curl unzip nftables certbot python3-certbot-dns-cloudflare cron gnupg2 ca-certificates openssl sed jq net-tools htop -y
+    [[ "$ssh_ufw" != "2" ]] && apt install unattended-upgrades -y
+    [[ ! -d /root/.gnupg ]] && mkdir -m 700 /root/.gnupg
+    os_codename=$(grep "VERSION_CODENAME=" /etc/os-release | cut -d "=" -f 2)
+
+    if grep -q -e "bullseye" -e "bookworm" -e "trixie" /etc/os-release
+    then
+        apt install debian-archive-keyring -y
+        server_os="debian"
+    else
+        apt install ubuntu-keyring -y
+        server_os="ubuntu"
+    fi
+
+    [[ ! -d /usr/share/keyrings ]] && mkdir -p /usr/share/keyrings
+    [[ ! -d /etc/apt/keyrings ]] && mkdir -p /etc/apt/keyrings
+    curl -fsSL https://sing-box.app/gpg.key -o /etc/apt/keyrings/sagernet.asc && chmod a+r /etc/apt/keyrings/sagernet.asc
+    gpg --dry-run --quiet --no-keyring --import --import-options import-show /etc/apt/keyrings/sagernet.asc
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/sagernet.asc] https://deb.sagernet.org/ * *" | tee /etc/apt/sources.list.d/sagernet.list > /dev/null
+    apt-get update -y && apt-get install sing-box -y
+    apt-mark hold sing-box
+
+    curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor | tee /usr/share/keyrings/nginx-archive-keyring.gpg > /dev/null
+    gpg --dry-run --quiet --no-keyring --import --import-options import-show /usr/share/keyrings/nginx-archive-keyring.gpg
+    echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/${server_os} ${os_codename} nginx" | tee /etc/apt/sources.list.d/nginx.list
+    echo -e "Package: *\nPin: origin nginx.org\nPin: release o=nginx\nPin-Priority: 900\n" | tee /etc/apt/preferences.d/99nginx
+    apt update -y && apt install nginx -y
+    [[ ! -d /var/www ]] && mkdir -p /var/www
+
+    [[ "$variant" != "1" ]] && apt install haproxy -y
+    apt autoremove -y; apt autoclean -y
+    echo ""
+}
+
+create_user() {
+    declare -A -g info_message=()
+    info_message[1_ru]="${textcolor_light}Создание пользователя ${username}...${clear}"
+    info_message[1_en]="${textcolor_light}Creating user ${username}...${clear}"
+
+    if [[ "$username" != "root" ]]
+    then
+        echo -e "${info_message[1_$language]}"
+        useradd -m -s $(which bash) -G sudo ${username}
+    fi
+
+    echo "${username}:$(openssl passwd -6 "${password}")" | chpasswd -e
+    echo ""
+}
+
+setup_ssh() {
+    declare -A -g info_message=()
+    info_message[1_ru]="${textcolor_light}Изменение настроек SSH...${clear}"
+    info_message[1_en]="${textcolor_light}Changing SSH settings...${clear}"
+
+    if [[ "$username" == "root" ]]
+    then
+        [[ $ssh_port -ne 22 ]] && echo -e "${info_message[1_$language]}"
+        sed -i -e "s/.*Port .*/Port ${ssh_port}/g" -e "s/.*PermitRootLogin no.*/PermitRootLogin yes/g" -e "s/.*#PermitRootLogin .*/PermitRootLogin yes/g" -e "s/.*PasswordAuthentication no.*/PasswordAuthentication yes/g" -e "s/.*#PasswordAuthentication .*/PasswordAuthentication yes/g" /etc/ssh/sshd_config
+        [[ ! -d /root/.ssh ]] && mkdir -p /root/.ssh
+    else
+        echo -e "${info_message[1_$language]}"
+        sed -i -e "s/.*Port .*/Port ${ssh_port}/g" -e "s/.*PermitRootLogin yes.*/PermitRootLogin no/g" -e "s/.*#PermitRootLogin .*/PermitRootLogin no/g" -e "s/.*PasswordAuthentication no.*/PasswordAuthentication yes/g" -e "s/.*#PasswordAuthentication .*/PasswordAuthentication yes/g" /etc/ssh/sshd_config
+        [[ ! -d /home/${username}/.ssh ]] && mkdir -p /home/${username}/.ssh
+        chown ${username}:sudo /home/${username}/.ssh
+        chmod 700 /home/${username}/.ssh
+    fi
+
+    if grep -q "noble" /etc/os-release
+    then
+        sed -i "s/.*ListenStream.*/ListenStream=${ssh_port}/g" /lib/systemd/system/ssh.socket
+        systemctl daemon-reload
+        systemctl restart ssh.socket
+    fi
+
+    grep -q "PasswordAuthentication yes" /etc/ssh/sshd_config.d/50-cloud-init.conf &> /dev/null && rm -f /etc/ssh/sshd_config.d/50-cloud-init.conf
+    systemctl restart ssh.service
+    echo ""
+}
+
+setup_nftables() {
+    declare -A -g info_message=()
+    info_message[1_ru]="${textcolor_light}Настройка nftables...${clear}"
+    info_message[2_ru]="Готово"
+    info_message[1_en]="${textcolor_light}Setting up nftables...${clear}"
+    info_message[2_en]="Done"
+
+    echo -e "${info_message[1_$language]}"
+
+    # Disable UFW if present (Ubuntu)
+    if command -v ufw &>/dev/null && ufw status | grep -q "active"; then
+        ufw disable &>/dev/null
+    fi
+
+    # Calculate /22 network from server IP for Reality protection
+    IFS=. read -r o1 o2 o3 o4 <<< "$server_ip"
+    server_network="$((o1)).$((o2)).$((o3 / 4 * 4)).0/22"
+
+    # Write nftables configuration
+    cat > /etc/nftables.conf <<NFTCONF
+#!/usr/sbin/nft -f
+
+flush ruleset
+
+table inet filter {
+    chain input {
+        type filter hook input priority 0; policy drop;
+
+        ct state established,related accept
+        iif lo accept
+        ip protocol icmp accept
+        ip6 nexthdr icmpv6 accept
+
+        # Blacklist — block detection networks
+        ip saddr @blacklist_v4 counter drop
+        ip6 saddr @blacklist_v6 counter drop
+
+        # Reality protection — block same subnet
+        ip saddr ${server_network} drop
+
+        # Allowed services
+        tcp dport ${ssh_port} accept
+        tcp dport 443 accept
+        tcp dport @temp_allow accept
+    }
+
+    chain forward {
+        type filter hook forward priority 0; policy accept;
+    }
+
+    chain output {
+        type filter hook output priority 0; policy accept;
+    }
+
+    set temp_allow {
+        type inet_service
+        flags interval
+    }
+
+    set blacklist_v4 {
+        type ipv4_addr
+        flags interval
+    }
+
+    set blacklist_v6 {
+        type ipv6_addr
+        flags interval
+    }
+}
+NFTCONF
+
+    systemctl enable nftables
+    systemctl restart nftables
+    echo -e "${info_message[2_$language]}"
+}
+
+setup_blacklist() {
+    declare -A -g info_message=()
+    info_message[1_ru]="${textcolor_light}Настройка блокировки сетей обнаружения...${clear}"
+    info_message[2_ru]="Готово"
+    info_message[1_en]="${textcolor_light}Setting up detection network blocking...${clear}"
+    info_message[2_en]="Done"
+
+    echo -e "${info_message[1_$language]}"
+
+    # Install blacklist-update script
+    wget -q -O /usr/local/bin/blacklist-update https://raw.githubusercontent.com/zipfo/Simple-Sing-Box/main/Scripts/blacklist-update.sh
+    chmod +x /usr/local/bin/blacklist-update
+
+    # Initial download
+    /usr/local/bin/blacklist-update
+
+    echo -e "${info_message[2_$language]}"
+}
+
+unattended_upgrades() {
+    declare -A -g info_message=()
+    info_message[1_ru]="${textcolor_light}Настройка unattended-upgrades...${clear}"
+    info_message[1_en]="${textcolor_light}Setting up unattended upgrades...${clear}"
+
+    echo -e "${info_message[1_$language]}"
+    echo 'Unattended-Upgrade::Mail "root";' >> /etc/apt/apt.conf.d/50unattended-upgrades
+    echo unattended-upgrades unattended-upgrades/enable_auto_updates boolean true | debconf-set-selections
+    dpkg-reconfigure -f noninteractive unattended-upgrades
+    systemctl restart unattended-upgrades.service
+    systemctl enable unattended-upgrades.service
+    echo ""
+}
+
+setup_general_security() {
+    if [[ "$ssh_ufw" != "2" ]]
+    then
+        create_user
+        setup_ssh
+        setup_nftables
+        unattended_upgrades
+    fi
+
+    if [[ "$blacklist_setup" != "2" ]]
+    then
+        # Ensure nftables table exists even if security setup was skipped
+        if ! nft list table inet filter &>/dev/null; then
+            setup_nftables
+        fi
+        setup_blacklist
+    fi
+}
+
+cert_dns_cf() {
+    if [[ $cf_token =~ [A-Z] ]]
+    then
+        echo "dns_cloudflare_api_token = ${cf_token}" >> /etc/letsencrypt/cloudflare.credentials
+    else
+        echo "dns_cloudflare_email = ${email}" >> /etc/letsencrypt/cloudflare.credentials
+        echo "dns_cloudflare_api_key = ${cf_token}" >> /etc/letsencrypt/cloudflare.credentials
+    fi
+
+    chown root:root /etc/letsencrypt/cloudflare.credentials
+    chmod 600 /etc/letsencrypt/cloudflare.credentials
+    certbot certonly --dns-cloudflare --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.credentials --dns-cloudflare-propagation-seconds 35 -d ${domain},*.${domain} --agree-tos -m ${email} --no-eff-email --non-interactive
+
+    if [[ $? -ne 0 ]]
+    then
+        sleep 3
+        echo ""
+        echo -e "${info_message[2_$language]}"
+        certbot delete --cert-name ${domain} --quiet &> /dev/null
+        certbot certonly --dns-cloudflare --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.credentials --dns-cloudflare-propagation-seconds 35 -d ${domain},*.${domain} --agree-tos -m ${email} --no-eff-email --non-interactive
+    fi
+}
+
+cert_standalone() {
+    nft add element inet filter temp_allow { 80 }
+    certbot certonly --standalone --preferred-challenges http --agree-tos --email ${email} -d ${domain} --no-eff-email --non-interactive
+
+    if [[ $? -ne 0 ]]
+    then
+        sleep 3
+        echo ""
+        echo -e "${info_message[2_$language]}"
+        certbot delete --cert-name ${domain} --quiet &> /dev/null
+        certbot certonly --standalone --preferred-challenges http --agree-tos --email ${email} -d ${domain} --no-eff-email --non-interactive
+    fi
+
+    nft delete element inet filter temp_allow { 80 }
+}
+
+certificates() {
+    declare -A -g info_message=()
+    info_message[1_ru]="${textcolor_light}Получение сертификата...${clear}"
+    info_message[2_ru]="${textcolor_light}Получение сертификата: 2-я попытка...${clear}"
+    info_message[1_en]="${textcolor_light}Requesting a certificate...${clear}"
+    info_message[2_en]="${textcolor_light}Requesting a certificate: 2nd attempt...${clear}"
+
+    echo -e "${info_message[1_$language]}"
+    warn_file=$(python3 -c "import os, CloudFlare; print(os.path.join(os.path.dirname(CloudFlare.__file__), 'warning_2_20.py'))")
+    [[ $(dpkg -s python3-cloudflare | grep -i '^version') =~ "2.20." ]] && sed -i 's/2\.20\./2\.25\./g' ${warn_file} &> /dev/null
+
+    if [[ "$validation_type" == "1" ]]
+    then
+        cert_dns_cf
+    else
+        cert_standalone
+    fi
+
+    if [[ "$variant" == "1" ]]
+    then
+        echo "renew_hook = systemctl reload nginx.service" >> /etc/letsencrypt/renewal/${domain}.conf
+        echo ""
+        openssl dhparam -out /etc/nginx/dhparam.pem 2048
+    else
+        echo "renew_hook = cat /etc/letsencrypt/live/${domain}/fullchain.pem /etc/letsencrypt/live/${domain}/privkey.pem > /etc/haproxy/certs/${domain}.pem && systemctl reload haproxy.service" >> /etc/letsencrypt/renewal/${domain}.conf
+        echo ""
+        openssl dhparam -out /etc/haproxy/dhparam.pem 2048
+    fi
+
+    echo ""
+}
+
+setup_warp() {
+    # Не устанавливаем WARP если пользователь выбрал "нет"
+    if [[ "$warp_option" == "2" ]]
+    then
+        return 0
+    fi
+
+    declare -A -g info_message=()
+    info_message[1_ru]="${textcolor_light}Настройка WARP...${clear}"
+    info_message[1_en]="${textcolor_light}Setting up WARP...${clear}"
+    info_message[3_ru]="${red}Не удалось настроить usque — используется резервный warp-cli${clear}"
+    info_message[3_en]="${red}Could not set up usque — falling back to the legacy warp-cli${clear}"
+
+    echo -e "${info_message[1_$language]}"
+
+    if setup_warp_usque
+    then
+        info_message[2_ru]="${textcolor_light}WARP работает через usque (MASQUE HTTP/2 поверх TCP). Endpoint: ${usque_endpoint}${clear}"
+        info_message[2_en]="${textcolor_light}WARP is running through usque (MASQUE HTTP/2 over TCP). Endpoint: ${usque_endpoint}${clear}"
+        echo ""
+        echo -e "${info_message[2_$language]}"
+        sed -i "s/^warp_backend=.*/warp_backend=usque/" /etc/secret-sing-box/config
+        sed -i "s/^usque_sni=.*/usque_sni=${usque_sni}/" /etc/secret-sing-box/config
+        sed -i "s/^usque_endpoint=.*/usque_endpoint=${usque_endpoint}/" /etc/secret-sing-box/config
+        sed -i "s/^usque_port=.*/usque_port=${usque_port}/" /etc/secret-sing-box/config
+        sed -i 's/warp_installed_by_script=false/warp_installed_by_script=true/' /etc/secret-sing-box/config
+    else
+        info_message[3_ru]="${red}Не удалось настроить usque — используется резервный warp-cli${clear}"
+        info_message[3_en]="${red}Could not set up usque — falling back to the legacy warp-cli${clear}"
+        echo ""
+        echo -e "${info_message[3_$language]}"
+        systemctl stop usque-warp.service > /dev/null 2>&1
+        systemctl disable usque-warp.service > /dev/null 2>&1
+        install_warp_cli
+        setup_warp_cli
+        sed -i "s/^warp_backend=.*/warp_backend=warp-cli/" /etc/secret-sing-box/config
+        sed -i 's/warp_installed_by_script=false/warp_installed_by_script=true/' /etc/secret-sing-box/config
+    fi
+
+    echo ""
+}
+
+generate_pass() {
+    [[ -z $trjpass ]] && trjpass=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 30)
+    [[ -z $trojanpath ]] && [[ "$variant" == "1" ]] && trojanpath=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 30)
+    [[ -z $uuid ]] && [[ "$variant" == "1" ]] && uuid=$(cat /proc/sys/kernel/random/uuid)
+    [[ -z $vlesspath ]] && [[ "$variant" == "1" ]] && vlesspath=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 30)
+    [[ -z $subspath ]] && subspath=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 30)
+    [[ -z $rulesetpath ]] && rulesetpath=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 30)
+    user_key="1$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 9)"
+}
+
+download_rule_sets() {
+    mkdir -p /var/www/${rulesetpath}
+
+    # Скачиваем rule sets (4 файла)
+    wget -q -P /var/www/${rulesetpath} https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs
+    wget -q -P /var/www/${rulesetpath} https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-gov-ru.srs
+    wget -q -P /var/www/${rulesetpath} https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs
+    wget -q -P /var/www/${rulesetpath} https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/sing-box/rule-set-geosite/geosite-ru-blocked.srs
+
+    chmod -R 755 /var/www/${rulesetpath}
+
+    # Скачиваем скрипт обновления rule sets
+    wget -q -O /usr/local/bin/rsupdate https://raw.githubusercontent.com/zipfo/Simple-Sing-Box/main/Scripts/ruleset-update.sh
+    chmod +x /usr/local/bin/rsupdate
+}
+
+sb_server_config() {
+
+    # === ПРОМЕЖУТОЧНЫЙ СЕРВЕР ===
+    if [[ "$chain_role" == "middle" ]]
+    then
+        if [[ "$middle_mode" == "2" ]]
+        then
+            # Режим 2: RU/SU/РФ → WARP, остальное → proxy
+cat > /etc/sing-box/config.json <<EOF
+{
+  "log": {
+    "level": "fatal",
+    "output": "box.log",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "local",
+        "tag": "dns-main"
+      }
+    ],
+    "rules": [
+      {
+        "rule_set": ["category-ads-all"],
+        "action": "predefined",
+        "rcode": "NOERROR"
+      }
+    ],
+    "final": "dns-main"
+  },
+  "inbounds": [
+    {
+      "type": "trojan",
+      "tag": "trojan-in",
+      "listen": "127.0.0.1",
+      "listen_port": 10443,
+      "users": [{"name": "${user_key}", "password": "${trjpass}"}],
+      "transport": {"type": "ws", "path": "/${trojanpath}"},
+      "multiplex": {"enabled": true, "padding": true}
+    },
+    {
+      "type": "vless",
+      "tag": "vless-in",
+      "listen": "127.0.0.1",
+      "listen_port": 11443,
+      "users": [{"name": "${user_key}", "uuid": "${uuid}"}],
+      "transport": {"type": "ws", "path": "/${vlesspath}"},
+      "multiplex": {"enabled": true, "padding": true}
+    }
+  ],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"},
+    {"type": "socks", "tag": "warp", "server": "127.0.0.1", "server_port": 40000}
+  ],
+  "route": {
+    "rules": [
+      {"action": "sniff"},
+      {"protocol": "dns", "action": "hijack-dns"},
+      {
+        "rule_set": ["category-ads-all"],
+        "action": "reject",
+        "method": "drop"
+      },
+      {
+        "domain_suffix": [".ru", ".su", ".ru.com", ".ru.net"],
+        "domain_keyword": ["xn--"],
+        "rule_set": ["geoip-ru", "category-gov-ru"],
+        "outbound": "warp"
+      },
+      {"inbound": ["trojan-in", "vless-in"], "outbound": "proxy"}
+    ],
+    "rule_set": [
+      {"tag": "geoip-ru", "type": "local", "format": "binary", "path": "/var/www/${rulesetpath}/geoip-ru.srs"},
+      {"tag": "category-gov-ru", "type": "local", "format": "binary", "path": "/var/www/${rulesetpath}/geosite-category-gov-ru.srs"},
+      {"tag": "category-ads-all", "type": "local", "format": "binary", "path": "/var/www/${rulesetpath}/geosite-category-ads-all.srs"}
+    ]
+  },
+  "experimental": {"cache_file": {"enabled": true}}
+}
+EOF
+        else
+            # Режим 1 и 3: весь трафик → proxy (без WARP правил)
+cat > /etc/sing-box/config.json <<EOF
+{
+  "log": {
+    "level": "fatal",
+    "output": "box.log",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [{"type": "local", "tag": "dns-main"}],
+    "rules": [{"rule_set": ["category-ads-all"], "action": "predefined", "rcode": "NOERROR"}],
+    "final": "dns-main"
+  },
+  "inbounds": [
+    {
+      "type": "trojan",
+      "tag": "trojan-in",
+      "listen": "127.0.0.1",
+      "listen_port": 10443,
+      "users": [{"name": "${user_key}", "password": "${trjpass}"}],
+      "transport": {"type": "ws", "path": "/${trojanpath}"},
+      "multiplex": {"enabled": true, "padding": true}
+    },
+    {
+      "type": "vless",
+      "tag": "vless-in",
+      "listen": "127.0.0.1",
+      "listen_port": 11443,
+      "users": [{"name": "${user_key}", "uuid": "${uuid}"}],
+      "transport": {"type": "ws", "path": "/${vlesspath}"},
+      "multiplex": {"enabled": true, "padding": true}
+    }
+  ],
+  "outbounds": [{"type": "direct", "tag": "direct"}],
+  "route": {
+    "rules": [
+      {"action": "sniff"},
+      {"protocol": "dns", "action": "hijack-dns"},
+      {"rule_set": ["category-ads-all"], "action": "reject", "method": "drop"},
+      {"inbound": ["trojan-in", "vless-in"], "outbound": "proxy"}
+    ],
+    "rule_set": [
+      {"tag": "category-ads-all", "type": "local", "format": "binary", "path": "/var/www/${rulesetpath}/geosite-category-ads-all.srs"}
+    ]
+  },
+  "experimental": {"cache_file": {"enabled": true}}
+}
+EOF
+        fi
+
+        return 0
+    fi
+
+    # === КОНЕЧНЫЙ СЕРВЕР ===
+    # Определяем outbounds и правила по warp_mode
+    if [[ "$warp_option" == "2" ]]
+    then
+        # Без WARP
+        outbounds='[{"type": "direct", "tag": "direct"}]'
+        if [[ "$warp_mode" == "2" ]]
+        then
+            # Ru-blocked + Client Direct
+            rules='[
+      {"action": "sniff"},
+      {"protocol": "dns", "action": "hijack-dns"},
+      {"rule_set": ["category-ads-all"], "action": "reject", "method": "drop"},
+      {
+        "rule_set": ["ru-blocked"],
+        "outbound": "direct"
+      }
+            ]'
+            rule_sets="[
+      {\"tag\": \"category-ads-all\", \"type\": \"local\", \"format\": \"binary\", \"path\": \"/var/www/${rulesetpath}/geosite-category-ads-all.srs\"},
+      {\"tag\": \"ru-blocked\", \"type\": \"local\", \"format\": \"binary\", \"path\": \"/var/www/${rulesetpath}/geosite-ru-blocked.srs\"}
+            ]"
+        else
+            # Полная маршрутизация — все через direct
+            rules='[{"action": "sniff"}, {"protocol": "dns", "action": "hijack-dns"}, {"rule_set": ["category-ads-all"], "action": "reject", "method": "drop"}]'
+            rule_sets="[{\"tag\": \"category-ads-all\", \"type\": \"local\", \"format\": \"binary\", \"path\": \"/var/www/${rulesetpath}/geosite-category-ads-all.srs\"}]"
+        fi
+    else
+        # С WARP
+        outbounds='[{"type": "direct", "tag": "direct"}, {"type": "socks", "tag": "warp", "server": "127.0.0.1", "server_port": 40000}]'
+
+        case "$warp_mode" in
+            1)
+                # Полный WARP
+                rules='[
+      {"action": "sniff"},
+      {"protocol": "dns", "action": "hijack-dns"},
+      {"rule_set": ["category-ads-all"], "action": "reject", "method": "drop"}
+                ]'
+                rule_sets="[
+      {\"tag\": \"category-ads-all\", \"type\": \"local\", \"format\": \"binary\", \"path\": \"/var/www/${rulesetpath}/geosite-category-ads-all.srs\"}
+                ]"
+                ;;
+            2)
+                # Server Direct (Ru-blocked): Ru-blocked → warp, остальное → direct
+                rules='[
+      {"action": "sniff"},
+      {"protocol": "dns", "action": "hijack-dns"},
+      {"rule_set": ["category-ads-all"], "action": "reject", "method": "drop"},
+      {"rule_set": ["ru-blocked"], "outbound": "warp"}
+                ]'
+                rule_sets="[
+      {\"tag\": \"category-ads-all\", \"type\": \"local\", \"format\": \"binary\", \"path\": \"/var/www/${rulesetpath}/geosite-category-ads-all.srs\"},
+      {\"tag\": \"ru-blocked\", \"type\": \"local\", \"format\": \"binary\", \"path\": \"/var/www/${rulesetpath}/geosite-ru-blocked.srs\"}
+                ]"
+                ;;
+            3)
+                # Client Direct (Ru-blocked): Ru-blocked → warp, остальное → direct (для клиента)
+                # Сервер: всё через direct, клиент сам маршрутизирует
+                rules='[
+      {"action": "sniff"},
+      {"protocol": "dns", "action": "hijack-dns"},
+      {"rule_set": ["category-ads-all"], "action": "reject", "method": "drop"}
+                ]'
+                rule_sets="[
+      {\"tag\": \"category-ads-all\", \"type\": \"local\", \"format\": \"binary\", \"path\": \"/var/www/${rulesetpath}/geosite-category-ads-all.srs\"}
+                ]"
+                ;;
+            4)
+                # Server Direct (RU/SU/РФ): RU → warp, остальное → direct
+                rules='[
+      {"action": "sniff"},
+      {"protocol": "dns", "action": "hijack-dns"},
+      {"rule_set": ["category-ads-all"], "action": "reject", "method": "drop"},
+      {
+        "domain_suffix": [".ru", ".su", ".ru.com", ".ru.net"],
+        "domain_keyword": ["xn--"],
+        "rule_set": ["geoip-ru", "category-gov-ru"],
+        "outbound": "warp"
+      }
+                ]'
+                rule_sets="[
+      {\"tag\": \"geoip-ru\", \"type\": \"local\", \"format\": \"binary\", \"path\": \"/var/www/${rulesetpath}/geoip-ru.srs\"},
+      {\"tag\": \"category-gov-ru\", \"type\": \"local\", \"format\": \"binary\", \"path\": \"/var/www/${rulesetpath}/geosite-category-gov-ru.srs\"},
+      {\"tag\": \"category-ads-all\", \"type\": \"local\", \"format\": \"binary\", \"path\": \"/var/www/${rulesetpath}/geosite-category-ads-all.srs\"}
+                ]"
+                ;;
+            5)
+                # Client Direct (RU/SU/РФ): RU → direct, остальное → warp
+                # Сервер: RU → warp, остальное → direct (обратный для клиента)
+                rules='[
+      {"action": "sniff"},
+      {"protocol": "dns", "action": "hijack-dns"},
+      {"rule_set": ["category-ads-all"], "action": "reject", "method": "drop"},
+      {
+        "domain_suffix": [".ru", ".su", ".ru.com", ".ru.net"],
+        "domain_keyword": ["xn--"],
+        "rule_set": ["geoip-ru", "category-gov-ru"],
+        "outbound": "warp"
+      }
+                ]'
+                rule_sets="[
+      {\"tag\": \"geoip-ru\", \"type\": \"local\", \"format\": \"binary\", \"path\": \"/var/www/${rulesetpath}/geoip-ru.srs\"},
+      {\"tag\": \"category-gov-ru\", \"type\": \"local\", \"format\": \"binary\", \"path\": \"/var/www/${rulesetpath}/geosite-category-gov-ru.srs\"},
+      {\"tag\": \"category-ads-all\", \"type\": \"local\", \"format\": \"binary\", \"path\": \"/var/www/${rulesetpath}/geosite-category-ads-all.srs\"}
+                ]"
+                ;;
+        esac
+    fi
+
+cat > /etc/sing-box/config.json <<EOF
+{
+  "log": {
+    "level": "fatal",
+    "output": "box.log",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [{"type": "local", "tag": "dns-main"}],
+    "rules": [{"rule_set": ["category-ads-all"], "action": "predefined", "rcode": "NOERROR"}],
+    "final": "dns-main"
+  },
+  "inbounds": [
+    {
+      "type": "trojan",
+      "tag": "trojan-in",
+      "listen": "127.0.0.1",
+      "listen_port": 10443,
+      "users": [{"name": "${user_key}", "password": "${trjpass}"}],
+      "transport": {"type": "ws", "path": "/${trojanpath}"},
+      "multiplex": {"enabled": true, "padding": true}
+    },
+    {
+      "type": "vless",
+      "tag": "vless-in",
+      "listen": "127.0.0.1",
+      "listen_port": 11443,
+      "users": [{"name": "${user_key}", "uuid": "${uuid}"}],
+      "transport": {"type": "ws", "path": "/${vlesspath}"},
+      "multiplex": {"enabled": true, "padding": true}
+    }
+  ],
+  "outbounds": ${outbounds},
+  "route": {
+    "rules": ${rules},
+    "rule_set": ${rule_sets}
+  },
+  "experimental": {"cache_file": {"enabled": true}}
+}
+EOF
+}
+
+sb_client_config() {
+
+    # === ПРОМЕЖУТОЧНЫЙ СЕРВЕР ===
+    if [[ "$chain_role" == "middle" ]]
+    then
+        if [[ "$middle_mode" == "3" ]]
+        then
+            # Режим 3: RU/SU/РФ → Direct клиента, остальное → proxy
+cat > /var/www/${subspath}/${user_key}-TRJ-CLIENT.json <<EOF
+{
+  "log": {"level": "fatal", "timestamp": true},
+  "dns": {
+    "servers": [
+      {"type": "tls", "tag": "dns-remote", "server": "1.1.1.1", "detour": "proxy"},
+      {"type": "local", "tag": "dns-local"}
+    ],
+    "rules": [
+      {"rule_set": ["category-ads-all"], "action": "predefined", "rcode": "NOERROR"},
+      {"inbound": ["tun-in"], "server": "dns-remote"}
+    ],
+    "strategy": "ipv4_only",
+    "final": "dns-local"
+  },
+  "inbounds": [
+    {"type": "tun", "tag": "tun-in", "interface_name": "tun0", "stack": "system", "address": ["172.19.0.1/28"], "auto_route": true, "strict_route": true}
+  ],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"},
+    {"type": "trojan", "tag": "proxy", "server": "${domain}", "server_port": 443, "password": "${trjpass}", "tls": {"enabled": true, "server_name": "${domain}"}, "transport": {"type": "ws", "path": "/${trojanpath}"}, "multiplex": {"enabled": true, "padding": true}}
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "rules": [
+      {"action": "sniff"},
+      {"protocol": "dns", "action": "hijack-dns"},
+      {"ip_is_private": true, "outbound": "direct"},
+      {"rule_set": ["category-ads-all"], "action": "reject", "method": "drop"},
+      {
+        "domain_suffix": [".ru", ".su", ".ru.com", ".ru.net"],
+        "domain_keyword": ["xn--"],
+        "rule_set": ["geoip-ru", "category-gov-ru"],
+        "outbound": "direct"
+      },
+      {"inbound": ["tun-in"], "outbound": "proxy"},
+      {"action": "resolve", "strategy": "prefer_ipv4"}
+    ],
+    "rule_set": [
+      {"tag": "geoip-ru", "type": "remote", "format": "binary", "url": "https://${domain}/${rulesetpath}/geoip-ru.srs"},
+      {"tag": "category-gov-ru", "type": "remote", "format": "binary", "url": "https://${domain}/${rulesetpath}/geosite-category-gov-ru.srs"},
+      {"tag": "category-ads-all", "type": "remote", "format": "binary", "url": "https://${domain}/${rulesetpath}/geosite-category-ads-all.srs"}
+    ]
+  },
+  "experimental": {"cache_file": {"enabled": true}}
+}
+EOF
+        else
+            # Режим 1 и 2: весь трафик через proxy
+cat > /var/www/${subspath}/${user_key}-TRJ-CLIENT.json <<EOF
+{
+  "log": {"level": "fatal", "timestamp": true},
+  "dns": {
+    "servers": [
+      {"type": "tls", "tag": "dns-remote", "server": "1.1.1.1", "detour": "proxy"},
+      {"type": "local", "tag": "dns-local"}
+    ],
+    "rules": [
+      {"rule_set": ["category-ads-all"], "action": "predefined", "rcode": "NOERROR"},
+      {"inbound": ["tun-in"], "server": "dns-remote"}
+    ],
+    "strategy": "ipv4_only",
+    "final": "dns-local"
+  },
+  "inbounds": [
+    {"type": "tun", "tag": "tun-in", "interface_name": "tun0", "stack": "system", "address": ["172.19.0.1/28"], "auto_route": true, "strict_route": true}
+  ],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"},
+    {"type": "trojan", "tag": "proxy", "server": "${domain}", "server_port": 443, "password": "${trjpass}", "tls": {"enabled": true, "server_name": "${domain}"}, "transport": {"type": "ws", "path": "/${trojanpath}"}, "multiplex": {"enabled": true, "padding": true}}
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "rules": [
+      {"action": "sniff"},
+      {"protocol": "dns", "action": "hijack-dns"},
+      {"ip_is_private": true, "outbound": "direct"},
+      {"rule_set": ["category-ads-all"], "action": "reject", "method": "drop"},
+      {"inbound": ["tun-in"], "outbound": "proxy"},
+      {"action": "resolve", "strategy": "prefer_ipv4"}
+    ],
+    "rule_set": [
+      {"tag": "category-ads-all", "type": "remote", "format": "binary", "url": "https://${domain}/${rulesetpath}/geosite-category-ads-all.srs"}
+    ]
+  },
+  "experimental": {"cache_file": {"enabled": true}}
+}
+EOF
+        fi
+
+        # Для промежуточного сервера VLESS конфиг НЕ создаётся
+        if [[ "$variant" == "1" ]] && [[ ! -f /etc/haproxy/auth.lua ]]
+        then
+            cp /var/www/${subspath}/${user_key}-TRJ-CLIENT.json /var/www/${subspath}/${user_key}-VLESS-CLIENT.json
+            echo "$(jq ".outbounds[1].type = \"vless\" | .outbounds[1] |= with_entries(.key |= if . == \"password\" then \"uuid\" else . end) | .outbounds[1].uuid = \"${uuid}\" | .outbounds[1].transport.path = \"/${vlesspath}\"" /var/www/${subspath}/${user_key}-VLESS-CLIENT.json)" > /var/www/${subspath}/${user_key}-VLESS-CLIENT.json
+        fi
+        return 0
+    fi
+
+    # === КОНЕЧНЫЙ СЕРВЕР ===
+    # Определяем правила для клиента по warp_mode
+    if [[ "$warp_option" == "2" ]]
+    then
+        # Без WARP
+        if [[ "$warp_mode" == "2" ]]
+        then
+            # Ru-blocked + Client Direct
+            client_rules='[
+      {"action": "sniff"},
+      {"protocol": "dns", "action": "hijack-dns"},
+      {"ip_is_private": true, "outbound": "direct"},
+      {"rule_set": ["category-ads-all"], "action": "reject", "method": "drop"},
+      {
+        "domain_suffix": [".ru", ".su", ".ru.com", ".ru.net"],
+        "domain_keyword": ["xn--"],
+        "rule_set": ["geoip-ru", "category-gov-ru"],
+        "outbound": "direct"
+      },
+      {"rule_set": ["ru-blocked"], "outbound": "proxy"},
+      {"inbound": ["tun-in"], "outbound": "proxy"},
+      {"action": "resolve", "strategy": "prefer_ipv4"}
+            ]'
+            client_rule_sets="[
+      {\"tag\": \"geoip-ru\", \"type\": \"remote\", \"format\": \"binary\", \"url\": \"https://${domain}/${rulesetpath}/geoip-ru.srs\"},
+      {\"tag\": \"category-gov-ru\", \"type\": \"remote\", \"format\": \"binary\", \"url\": \"https://${domain}/${rulesetpath}/geosite-category-gov-ru.srs\"},
+      {\"tag\": \"category-ads-all\", \"type\": \"remote\", \"format\": \"binary\", \"url\": \"https://${domain}/${rulesetpath}/geosite-category-ads-all.srs\"},
+      {\"tag\": \"ru-blocked\", \"type\": \"remote\", \"format\": \"binary\", \"url\": \"https://${domain}/${rulesetpath}/geosite-ru-blocked.srs\"}
+            ]"
+        else
+            # Полная маршрутизация: всё через proxy
+            client_rules='[
+      {"action": "sniff"},
+      {"protocol": "dns", "action": "hijack-dns"},
+      {"ip_is_private": true, "outbound": "direct"},
+      {"rule_set": ["category-ads-all"], "action": "reject", "method": "drop"},
+      {"inbound": ["tun-in"], "outbound": "proxy"},
+      {"action": "resolve", "strategy": "prefer_ipv4"}
+            ]'
+            client_rule_sets="[
+      {\"tag\": \"category-ads-all\", \"type\": \"remote\", \"format\": \"binary\", \"url\": \"https://${domain}/${rulesetpath}/geosite-category-ads-all.srs\"}
+            ]"
+        fi
+    else
+        # С WARP
+        case "$warp_mode" in
+            1)
+                # Полный WARP: всё через proxy
+                client_rules='[
+      {"action": "sniff"},
+      {"protocol": "dns", "action": "hijack-dns"},
+      {"ip_is_private": true, "outbound": "direct"},
+      {"rule_set": ["category-ads-all"], "action": "reject", "method": "drop"},
+      {"inbound": ["tun-in"], "outbound": "proxy"},
+      {"action": "resolve", "strategy": "prefer_ipv4"}
+                ]'
+                client_rule_sets="[
+      {\"tag\": \"category-ads-all\", \"type\": \"remote\", \"format\": \"binary\", \"url\": \"https://${domain}/${rulesetpath}/geosite-category-ads-all.srs\"}
+                ]"
+                ;;
+            2|3)
+                # Server/Client Direct (Ru-blocked)
+                client_rules='[
+      {"action": "sniff"},
+      {"protocol": "dns", "action": "hijack-dns"},
+      {"ip_is_private": true, "outbound": "direct"},
+      {"rule_set": ["category-ads-all"], "action": "reject", "method": "drop"},
+      {"rule_set": ["ru-blocked"], "outbound": "proxy"},
+      {"inbound": ["tun-in"], "outbound": "proxy"},
+      {"action": "resolve", "strategy": "prefer_ipv4"}
+                ]'
+                client_rule_sets="[
+      {\"tag\": \"category-ads-all\", \"type\": \"remote\", \"format\": \"binary\", \"url\": \"https://${domain}/${rulesetpath}/geosite-category-ads-all.srs\"},
+      {\"tag\": \"ru-blocked\", \"type\": \"remote\", \"format\": \"binary\", \"url\": \"https://${domain}/${rulesetpath}/geosite-ru-blocked.srs\"}
+                ]"
+                ;;
+            4)
+                # Server Direct (RU/SU/РФ): RU → proxy, остальное → direct
+                client_rules='[
+      {"action": "sniff"},
+      {"protocol": "dns", "action": "hijack-dns"},
+      {"ip_is_private": true, "outbound": "direct"},
+      {"rule_set": ["category-ads-all"], "action": "reject", "method": "drop"},
+      {
+        "domain_suffix": [".ru", ".su", ".ru.com", ".ru.net"],
+        "domain_keyword": ["xn--"],
+        "rule_set": ["geoip-ru", "category-gov-ru"],
+        "outbound": "proxy"
+      },
+      {"inbound": ["tun-in"], "outbound": "proxy"},
+      {"action": "resolve", "strategy": "prefer_ipv4"}
+                ]'
+                client_rule_sets="[
+      {\"tag\": \"geoip-ru\", \"type\": \"remote\", \"format\": \"binary\", \"url\": \"https://${domain}/${rulesetpath}/geoip-ru.srs\"},
+      {\"tag\": \"category-gov-ru\", \"type\": \"remote\", \"format\": \"binary\", \"url\": \"https://${domain}/${rulesetpath}/geosite-category-gov-ru.srs\"},
+      {\"tag\": \"category-ads-all\", \"type\": \"remote\", \"format\": \"binary\", \"url\": \"https://${domain}/${rulesetpath}/geosite-category-ads-all.srs\"}
+                ]"
+                ;;
+            5)
+                # Client Direct (RU/SU/РФ): RU → direct, остальное → proxy
+                client_rules='[
+      {"action": "sniff"},
+      {"protocol": "dns", "action": "hijack-dns"},
+      {"ip_is_private": true, "outbound": "direct"},
+      {"rule_set": ["category-ads-all"], "action": "reject", "method": "drop"},
+      {
+        "domain_suffix": [".ru", ".su", ".ru.com", ".ru.net"],
+        "domain_keyword": ["xn--"],
+        "rule_set": ["geoip-ru", "category-gov-ru"],
+        "outbound": "direct"
+      },
+      {"inbound": ["tun-in"], "outbound": "proxy"},
+      {"action": "resolve", "strategy": "prefer_ipv4"}
+                ]'
+                client_rule_sets="[
+      {\"tag\": \"geoip-ru\", \"type\": \"remote\", \"format\": \"binary\", \"url\": \"https://${domain}/${rulesetpath}/geoip-ru.srs\"},
+      {\"tag\": \"category-gov-ru\", \"type\": \"remote\", \"format\": \"binary\", \"url\": \"https://${domain}/${rulesetpath}/geosite-category-gov-ru.srs\"},
+      {\"tag\": \"category-ads-all\", \"type\": \"remote\", \"format\": \"binary\", \"url\": \"https://${domain}/${rulesetpath}/geosite-category-ads-all.srs\"}
+                ]"
+                ;;
+        esac
+    fi
+
+cat > /var/www/${subspath}/${user_key}-TRJ-CLIENT.json <<EOF
+{
+  "log": {"level": "fatal", "timestamp": true},
+  "dns": {
+    "servers": [
+      {"type": "tls", "tag": "dns-remote", "server": "1.1.1.1", "detour": "proxy"},
+      {"type": "local", "tag": "dns-local"}
+    ],
+    "rules": [
+      {"rule_set": ["category-ads-all"], "action": "predefined", "rcode": "NOERROR"},
+      {"inbound": ["tun-in"], "server": "dns-remote"}
+    ],
+    "strategy": "ipv4_only",
+    "final": "dns-local"
+  },
+  "inbounds": [
+    {"type": "tun", "tag": "tun-in", "interface_name": "tun0", "stack": "system", "address": ["172.19.0.1/28"], "auto_route": true, "strict_route": true}
+  ],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"},
+    {"type": "trojan", "tag": "proxy", "server": "${domain}", "server_port": 443, "password": "${trjpass}", "tls": {"enabled": true, "server_name": "${domain}"}, "transport": {"type": "ws", "path": "/${trojanpath}"}, "multiplex": {"enabled": true, "padding": true}}
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "rules": ${client_rules},
+    "rule_set": ${client_rule_sets}
+  },
+  "experimental": {"cache_file": {"enabled": true}}
+}
+EOF
+
+    # Если не HAProxy и variant=1 — создаём VLESS клиентский конфиг
+    if [[ "$variant" == "1" ]] && [[ ! -f /etc/haproxy/auth.lua ]]
+    then
+        cp /var/www/${subspath}/${user_key}-TRJ-CLIENT.json /var/www/${subspath}/${user_key}-VLESS-CLIENT.json
+        echo "$(jq ".outbounds[1].type = \"vless\" | .outbounds[1] |= with_entries(.key |= if . == \"password\" then \"uuid\" else . end) | .outbounds[1].uuid = \"${uuid}\" | .outbounds[1].transport.path = \"/${vlesspath}\"" /var/www/${subspath}/${user_key}-VLESS-CLIENT.json)" > /var/www/${subspath}/${user_key}-VLESS-CLIENT.json
+    fi
+}
+
+
+setup_sing_box() {
+    declare -A -g info_message=()
+    info_message[1_ru]="${textcolor_light}Настройка Sing-Box...${clear}"
+    info_message[1_en]="${textcolor_light}Setting up Sing-Box...${clear}"
+
+    echo -e "${info_message[1_$language]}"
+    generate_pass
+    mkdir -p /var/www/${subspath}
+    sb_server_config
+    sb_client_config
+    outbound_num=$(jq '[.outbounds[].tag] | index("proxy")' /var/www/${subspath}/${user_key}-TRJ-CLIENT.json)
+
+    if [[ "$transport" == "2" ]]
+    then
+        echo "$(jq '.inbounds[].transport.type = "httpupgrade"' /etc/sing-box/config.json)" > /etc/sing-box/config.json
+        echo "$(jq ".outbounds[${outbound_num}].transport.type = \"httpupgrade\"" /var/www/${subspath}/${user_key}-TRJ-CLIENT.json)" > /var/www/${subspath}/${user_key}-TRJ-CLIENT.json
+    fi
+
+    if [[ "$variant" == "1" ]]
+    then
+        echo "$(jq ".outbounds[${outbound_num}].type = \"vless\" | .outbounds[${outbound_num}] |= with_entries(.key |= if . == \"password\" then \"uuid\" else . end) | .outbounds[${outbound_num}].uuid = \"${uuid}\" | .outbounds[${outbound_num}].transport.path = \"/${vlesspath}\"" /var/www/${subspath}/${user_key}-TRJ-CLIENT.json)" > /var/www/${subspath}/${user_key}-VLESS-CLIENT.json
+    else
+        inbound_num_tr=$(jq '[.inbounds[].tag] | index("trojan-in")' /etc/sing-box/config.json)
+        inbound_num_vl=$(jq '[.inbounds[].tag] | index("vless-in")' /etc/sing-box/config.json)
+        echo "$(jq "del(.inbounds[${inbound_num_tr}].transport.type, .inbounds[${inbound_num_tr}].transport.path, .inbounds[${inbound_num_vl}])" /etc/sing-box/config.json)" > /etc/sing-box/config.json
+        echo "$(jq "del(.outbounds[${outbound_num}].transport.type, .outbounds[${outbound_num}].transport.path)" /var/www/${subspath}/${user_key}-TRJ-CLIENT.json)" > /var/www/${subspath}/${user_key}-TRJ-CLIENT.json
+    fi
+
+    download_rule_sets
+    mkdir -p /etc/systemd/system/sing-box.service.d
+    echo -e "[Service]\nExecReload=/bin/kill -HUP \$MAINPID" > /etc/systemd/system/sing-box.service.d/override.conf
+    systemctl daemon-reload
+    systemctl restart sing-box.service
+    systemctl enable sing-box.service
+    echo ""
+}
+
+for_nginx_options() {
+    if [[ "$variant" == "1" ]] && [[ ! $option =~ ^(2|3|4)$ ]]
+    then
+        touch /etc/nginx/.htpasswd
+    fi
+
+    if [[ "$option" == "3" ]]
+    then
+        wget -P /var/www --mirror --convert-links --adjust-extension --page-requisites --no-parent https://${site_link}
+        site_dir_root=$(echo "${site_link}" | cut -d "/" -f 1)
+        chmod -R 755 /var/www/${site_dir_root}
+        mkdir ./testdir
+        wget -q -P ./testdir https://${site_link}
+        index=$(ls ./testdir)
+        rm -rf ./testdir
+
+        for search_name in "$index" '*.htm*'
+        do
+            index_path=$(find /var/www/${site_dir_root} -name "${search_name}" -type f -printf "%d %p\n" | sort -n | head -n 1 | cut -d " " -f 2-)
+            [[ -n $index_path ]] && [[ "$search_name" == "$index" ]] && break
+            index=$(echo "${index_path}" | rev | cut -d "/" -f 1 | rev)
+        done
+
+        site_dir=${index_path%"/${index}"}
+        site_dir=${site_dir#"/var/www/"}
+        echo ""
+    fi
+
+    if [[ "$option" == "4" ]]
+    then
+        site_dir_root=$(echo "${index_path}" | cut -d "/" -f 2)
+        mv -f /root/${site_dir_root} /var/www
+        chmod -R 755 /var/www/${site_dir_root}
+        index=$(echo "${index_path}" | rev | cut -d "/" -f 1 | rev)
+        site_dir=${index_path%"/${index}"}
+        site_dir=${site_dir#"/"}
+    fi
+}
+
+nginx_config_1() {
+cat > /etc/nginx/nginx.conf <<EOF
+user                 www-data;
+pid                  /run/nginx.pid;
+worker_processes     auto;
+worker_rlimit_nofile 65535;
+
+# Load modules
+include              /etc/nginx/modules-enabled/*.conf;
+
+events {
+    multi_accept       on;
+    worker_connections 65535;
+}
+
+http {
+    sendfile                      on;
+    tcp_nopush                    on;
+    tcp_nodelay                   on;
+    server_tokens                 off;
+    types_hash_max_size           2048;
+    types_hash_bucket_size        64;
+    server_names_hash_bucket_size 128;
+    client_max_body_size          16M;
+
+    # Timeout
+    keepalive_timeout             60s;
+    keepalive_requests            1000;
+    reset_timedout_connection     on;
+
+    # Rate limit for the subscription path
+    limit_req_zone                \$binary_remote_addr zone=limit_sub:1m rate=60r/m;
+
+    # MIME
+    include                       mime.types;
+    default_type                  application/octet-stream;
+
+    # Logging
+    access_log                    off;
+    error_log                     off;
+
+    # SSL
+    ssl_session_timeout           1d;
+    ssl_session_cache             shared:SSL:10m;
+    ssl_session_tickets           off;
+
+    # Mozilla Intermediate configuration
+    ssl_protocols                 TLSv1.2 TLSv1.3;
+    ssl_ciphers                   TLS13_AES_128_GCM_SHA256:TLS13_AES_256_GCM_SHA384:TLS13_CHACHA20_POLY1305_SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305;
+
+    # Connection header for WebSocket reverse proxy
+    map \$http_upgrade \$connection_upgrade {
+        default upgrade;
+        ""      close;
+    }
+
+    map \$remote_addr \$proxy_forwarded_elem {
+
+        # IPv4 addresses can be sent as-is
+        ~^[0-9.]+$        "for=\$remote_addr";
+
+        # IPv6 addresses need to be bracketed and quoted
+        ~^[0-9A-Fa-f:.]+$ "for=\"[\$remote_addr]\"";
+
+        # Unix domain socket names cannot be represented in RFC 7239 syntax
+        default           "for=unknown";
+    }
+
+    map \$http_forwarded \$proxy_add_forwarded {
+
+        # If the incoming Forwarded header is syntactically valid, append to it
+        "${append}" "\$http_forwarded, \$proxy_forwarded_elem";
+
+        # Otherwise, replace it
+        default "\$proxy_forwarded_elem";
+    }
+
+    # Disable access via IP or wrong domain name
+    server {
+        listen                443 ssl default_server;
+        listen                [::]:443 ssl default_server;
+        http2                 on;
+        server_name           _;
+
+        ssl_certificate       /etc/letsencrypt/live/${domain}/fullchain.pem;
+        ssl_certificate_key   /etc/letsencrypt/live/${domain}/privkey.pem;
+        ssl_dhparam           /etc/nginx/dhparam.pem;
+
+        return                403;
+    }
+
+    # Site
+    server {
+        listen                               443 ssl;
+        listen                               [::]:443 ssl;
+        http2                                on;
+        server_name                          ${domain} *.${domain};
+        ${comment_1}${comment_2}root                                 /var/www/${site_dir};
+        ${comment_1}${comment_2}index                                ${index};
+
+        # SSL
+        ssl_certificate                      /etc/letsencrypt/live/${domain}/fullchain.pem;
+        ssl_certificate_key                  /etc/letsencrypt/live/${domain}/privkey.pem;
+
+        # Diffie-Hellman parameter for DHE ciphersuites
+        ssl_dhparam                          /etc/nginx/dhparam.pem;
+
+        # Security headers
+        add_header X-XSS-Protection          "1; mode=block" always;
+        add_header X-Content-Type-Options    "nosniff" always;
+        add_header Referrer-Policy           "no-referrer-when-downgrade" always;
+        add_header Content-Security-Policy   "default-src 'self' http: https: ws: wss: data: blob: 'unsafe-inline'; frame-ancestors 'self';" always;
+        add_header Permissions-Policy        "interest-cohort=()" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        proxy_hide_header X-Powered-By;
+
+        # . files
+        location ~ /\.(?!well-known) {
+            deny all;
+        }
+
+        # Main location
+        ${comment_3}location / {
+            ${comment_2}${comment_3}auth_basic "Restricted Content";
+            ${comment_2}${comment_3}auth_basic_user_file /etc/nginx/.htpasswd;
+            ${comment_1}${comment_3}return 301 https://${redirect}\$request_uri;
+        ${comment_3}}
+
+        # Subsciption
+        location ~ ^/${subspath}/ {
+            limit_req zone=limit_sub burst=20 nodelay;
+            default_type application/json;
+            root /var/www;
+        }
+
+        # Rule sets
+        location /${rulesetpath}/ {
+            alias /var/www/${rulesetpath}/;
+            add_header Content-disposition "attachment";
+        }
+
+        # Trojan
+        location = /${trojanpath} {
+            set \$ws_port 10443;
+            try_files "" @ws_proxy;
+        }
+
+        # VLESS
+        location = /${vlesspath} {
+            set \$ws_port 11443;
+            try_files "" @ws_proxy;
+        }
+
+        # Reverse proxy
+        location @ws_proxy {
+            if (\$http_upgrade != "websocket") {
+                return 404;
+            }
+
+            proxy_pass                         http://127.0.0.1:\$ws_port;
+            proxy_set_header Host              \$host;
+            proxy_http_version                 1.1;
+            proxy_cache_bypass                 \$http_upgrade;
+
+            # Proxy SSL
+            proxy_ssl_server_name              on;
+
+            # Proxy headers
+            proxy_set_header Upgrade           \$http_upgrade;
+            proxy_set_header Connection        \$connection_upgrade;
+            proxy_set_header X-Real-IP         \$remote_addr;
+            proxy_set_header Forwarded         \$proxy_add_forwarded;
+            proxy_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_set_header X-Forwarded-Host  \$host;
+            proxy_set_header X-Forwarded-Port  \$server_port;
+
+            # Proxy timeouts
+            proxy_connect_timeout              60s;
+            proxy_send_timeout                 60s;
+            proxy_read_timeout                 60s;
+        }
+
+        # gzip
+        gzip            on;
+        gzip_vary       on;
+        gzip_proxied    any;
+        gzip_comp_level 6;
+        gzip_types      text/plain text/css text/xml application/json application/javascript application/rss+xml application/atom+xml image/svg+xml;
+    }
+}
+EOF
+}
+
+nginx_config_2() {
+cat > /etc/nginx/nginx.conf <<EOF
+user                 www-data;
+pid                  /run/nginx.pid;
+worker_processes     auto;
+worker_rlimit_nofile 65535;
+
+# Load modules
+include              /etc/nginx/modules-enabled/*.conf;
+
+events {
+    multi_accept       on;
+    worker_connections 65535;
+}
+
+http {
+    sendfile                  on;
+    tcp_nopush                on;
+    tcp_nodelay               on;
+    server_tokens             off;
+    types_hash_max_size       2048;
+    types_hash_bucket_size    64;
+    client_max_body_size      16M;
+
+    # Timeout
+    keepalive_timeout         60s;
+    keepalive_requests        1000;
+    reset_timedout_connection on;
+
+    # Rate limit for the subscription path
+    limit_req_zone            \$binary_remote_addr zone=limit_sub:1m rate=60r/m;
+
+    # MIME
+    include                   mime.types;
+    default_type              application/octet-stream;
+
+    # Logging
+    access_log                off;
+    error_log                 off;
+
+    # Site
+    server {
+        listen                               127.0.0.1:11443 default_server;
+        server_name                          _;
+        ${comment_1}${comment_2}root                                 /var/www/${site_dir};
+        ${comment_1}${comment_2}index                                ${index};
+
+        # Security headers
+        add_header X-XSS-Protection          "1; mode=block" always;
+        add_header X-Content-Type-Options    "nosniff" always;
+        add_header Referrer-Policy           "no-referrer-when-downgrade" always;
+        add_header Content-Security-Policy   "default-src 'self' http: https: ws: wss: data: blob: 'unsafe-inline'; frame-ancestors 'self';" always;
+        add_header Permissions-Policy        "interest-cohort=()" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        proxy_hide_header X-Powered-By;
+
+        # . files
+        location ~ /\.(?!well-known) {
+            deny all;
+        }
+
+        # Subsciption
+        location ~ ^/${subspath}/ {
+            limit_req zone=limit_sub burst=20 nodelay;
+            default_type application/json;
+            root /var/www;
+        }
+
+        # Rule sets
+        location /${rulesetpath}/ {
+            alias /var/www/${rulesetpath}/;
+            add_header Content-disposition "attachment";
+        }
+
+        # gzip
+        gzip            on;
+        gzip_vary       on;
+        gzip_proxied    any;
+        gzip_comp_level 6;
+        gzip_types      text/plain text/css text/xml application/json application/javascript application/rss+xml application/atom+xml image/svg+xml;
+    }
+}
+EOF
+}
+
+setup_nginx() {
+    declare -A -g info_message=()
+    info_message[1_ru]="${textcolor_light}Настройка NGINX...${clear}"
+    info_message[1_en]="${textcolor_light}Setting up NGINX...${clear}"
+
+    echo -e "${info_message[1_$language]}"
+    for_nginx_options
+
+    if [[ "$variant" == "1" ]]
+    then
+        append='~^(,[ \\t]*)*([!#$%&'\''*+.^_`|~0-9A-Za-z-]+=([!#$%&'\''*+.^_`|~0-9A-Za-z-]+|\"([\\t \\x21\\x23-\\x5B\\x5D-\\x7E\\x80-\\xFF]|\\\\[\\t \\x21-\\x7E\\x80-\\xFF])*\"))?(;([!#$%&'\''*+.^_`|~0-9A-Za-z-]+=([!#$%&'\''*+.^_`|~0-9A-Za-z-]+|\"([\\t \\x21\\x23-\\x5B\\x5D-\\x7E\\x80-\\xFF]|\\\\[\\t \\x21-\\x7E\\x80-\\xFF])*\"))?)*([ \\t]*,([ \\t]*([!#$%&'\''*+.^_`|~0-9A-Za-z-]+=([!#$%&'\''*+.^_`|~0-9A-Za-z-]+|\"([\\t \\x21\\x23-\\x5B\\x5D-\\x7E\\x80-\\xFF]|\\\\[\\t \\x21-\\x7E\\x80-\\xFF])*\"))?(;([!#$%&'\''*+.^_`|~0-9A-Za-z-]+=([!#$%&'\''*+.^_`|~0-9A-Za-z-]+|\"([\\t \\x21\\x23-\\x5B\\x5D-\\x7E\\x80-\\xFF]|\\\\[\\t \\x21-\\x7E\\x80-\\xFF])*\"))?)*)?)*$'
+        nginx_config_1
+    else
+        nginx_config_2
+    fi
+
+    systemctl enable nginx.service
+    nginx -t
+    systemctl restart nginx.service
+    echo ""
+}
+
+auth_lua() {
+cat > /etc/haproxy/auth.lua <<EOF
+local passwords = {
+    ["${pass_hash}"] = true,    -- User '${user_key}'
+    ["${placeholder}"] = false    -- Placeholder (do not remove)
+}
+
+function trojan_auth(txn)
+    local status, data = pcall(function() return txn.req:dup() end)
+    if status and data then
+        -- Uncomment to enable logging of all received data
+        -- core.Info("Received data from client: " .. data)
+        local sniffed_password = string.sub(data, 1, 56)
+        -- Uncomment to enable logging of sniffed password hashes
+        -- core.Info("Sniffed password: " .. sniffed_password)
+        if passwords[sniffed_password] then
+            return "trojan"
+        end
+    end
+    return "http"
+end
+
+core.register_fetches("trojan_auth", trojan_auth)
+EOF
+}
+
+haproxy_config() {
+cat > /etc/haproxy/haproxy.cfg <<EOF
+global
+        # Uncomment to enable system logging
+        # log /dev/log local0
+        # log /dev/log local1 notice
+        log /dev/log local2 warning
+        lua-load /etc/haproxy/auth.lua
+        chroot /var/lib/haproxy
+        stats socket /run/haproxy/admin.sock mode 660 level admin
+        stats timeout 30s
+        user haproxy
+        group haproxy
+        daemon
+
+        # Mozilla Intermediate
+        # ssl-default-bind-ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CHACHA20-POLY1305
+        # ssl-default-bind-ciphersuites TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256
+        # ssl-default-bind-options prefer-client-ciphers no-sslv3 no-tlsv10 no-tlsv11 no-tls-tickets
+        # ssl-default-server-ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CHACHA20-POLY1305
+        # ssl-default-server-ciphersuites TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256
+        # ssl-default-server-options no-sslv3 no-tlsv10 no-tlsv11 no-tls-tickets
+
+        # Mozilla Modern
+        ssl-default-bind-ciphersuites TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256
+        ssl-default-bind-options prefer-client-ciphers no-sslv3 no-tlsv10 no-tlsv11 no-tls-tickets
+        ssl-default-server-ciphersuites TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256
+        ssl-default-server-options no-sslv3 no-tlsv10 no-tlsv11 no-tls-tickets
+
+        # DH parameters
+        ssl-dh-param-file /etc/haproxy/dhparam.pem
+
+defaults
+        mode http
+        log global
+        option tcplog
+        option  dontlognull
+        timeout connect 5000
+        timeout client  50000
+        timeout server  50000
+
+frontend haproxy-tls
+        mode tcp
+        timeout client 1h
+        bind :::443 v4v6 ssl crt /etc/haproxy/certs/${domain}.pem alpn h2,http/1.1
+        tcp-request inspect-delay 5s
+        tcp-request content accept if { req_ssl_hello_type 1 }
+
+        # Backend rules
+        use_backend reject if !{ ssl_fc_sni -i ${domain} } !{ ssl_fc_sni -m end .${domain} }
+        ${comment_3}use_backend http-sub if { path_beg /${subspath}/ } || { path_beg /${rulesetpath}/ }
+        use_backend %[lua.trojan_auth]
+        default_backend http-main
+
+backend trojan
+        mode tcp
+        timeout server 1h
+        server sing-box 127.0.0.1:10443
+
+backend http-main
+        mode http
+        timeout server 1h
+        ${comment_2}${comment_3}http-request auth unless { http_auth(mycredentials) }
+        ${comment_1}${comment_3}http-request redirect code 301 location https://${redirect}%[capture.req.uri]
+        ${comment_1}${comment_2}server nginx 127.0.0.1:11443
+
+${comment_3}backend http-sub
+        ${comment_3}mode http
+        ${comment_3}timeout server 1h
+        ${comment_3}server nginx 127.0.0.1:11443
+
+backend reject
+        mode http
+        timeout server 1h
+        http-request deny
+
+${comment_2}${comment_3}userlist mycredentials
+EOF
+}
+
+setup_haproxy() {
+    declare -A -g info_message=()
+    info_message[1_ru]="${textcolor_light}Настройка HAProxy...${clear}"
+    info_message[1_en]="${textcolor_light}Setting up HAProxy...${clear}"
+
+    if [[ "$variant" != "1" ]]
+    then
+        echo -e "${info_message[1_$language]}"
+        pass_hash=$(echo -n "${trjpass}" | openssl dgst -sha224 | sed 's/.* //')
+        placeholder=$(openssl rand -hex 28)
+        auth_lua
+
+        mkdir -p /etc/haproxy/certs
+        cat /etc/letsencrypt/live/${domain}/fullchain.pem /etc/letsencrypt/live/${domain}/privkey.pem > /etc/haproxy/certs/${domain}.pem
+        haproxy_config
+
+        systemctl enable haproxy.service
+        haproxy -f /etc/haproxy/haproxy.cfg -c
+        systemctl restart haproxy.service
+        echo ""
+    fi
+}
+
+setup_crontab() {
+    declare -A -g info_message=()
+    info_message[1_ru]="${textcolor_light}Настройка crontab...${clear}"
+    info_message[1_en]="${textcolor_light}Setting up crontab...${clear}"
+
+    echo -e "${info_message[1_$language]}"
+    certbot_command="nft add element inet filter temp_allow { 80 } && certbot -q renew; nft delete element inet filter temp_allow { 80 }"
+    [[ "$validation_type" == "1" ]] && certbot_command="certbot -q renew"
+
+    blacklist_cron=""
+    [[ "$blacklist_setup" != "2" ]] && blacklist_cron="30 4 * * * blacklist-update"
+
+	crontab - <<-EOF
+	PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+	@reboot sleep 5 && sysctl --system
+	0 2 * * * ${certbot_command}
+	10 2 * * * rsupdate
+	${blacklist_cron}
+	EOF
+
+    crontab -l
+    echo ""
+}
+
+add_sbmanager() {
+    declare -A -g info_message=()
+    info_message[1_ru]="${textcolor_light}Добавление меню настроек...${clear}"
+    info_message[1_en]="${textcolor_light}Adding settings menu...${clear}"
+
+    echo -e "${info_message[1_$language]}"
+    wget -O /usr/local/bin/sbmanager https://raw.githubusercontent.com/zipfo/Simple-Sing-Box/main/Scripts/sb-manager.sh
+    chmod +x /usr/local/bin/sbmanager
+    echo "alias ssb='/usr/local/bin/sbmanager'" >> /etc/bash.bashrc
+    echo "alias sudo='sudo '" >> /etc/bash.bashrc
+}
+
+add_sub_page() {
+    declare -A -g info_message=()
+    info_message[1_ru]="${textcolor_light}Добавление страницы подписок...${clear}"
+    info_message[1_en]="${textcolor_light}Adding subscription page...${clear}"
+
+    echo -e "${info_message[1_$language]}"
+    data_vrnt="both"
+    [[ "$variant" != "1" ]] && data_vrnt="novless"
+
+    # Определяем атрибуты для страницы подписок
+    html_attrs="html lang=\"${language}\" data-vrnt=\"${data_vrnt}\" data-role=\"${chain_role}\" data-mode=\"${middle_mode:-1}\""
+
+    wget -P /var/www/${subspath} https://raw.githubusercontent.com/zipfo/Simple-Sing-Box/main/Subscription-Page/sub.html
+    sed -i -e "s/DOMAIN/${domain}/g" -e "s/SUBSCRIPTION-PATH/${subspath}/g" -e "s/html lang=\"en\" data-vrnt=\"both\" data-role=\"end\" data-mode=\"1\"/${html_attrs}/g" /var/www/${subspath}/sub.html
+}
+
+final_text_ru() {
+    echo ""
+    echo ""
+    echo -e "${textcolor}Если выше не возникло ошибок, то настройка завершена! Сохраните текст внизу!${clear}"
+    echo ""
+    if [[ "$ssh_ufw" != "2" ]]
+    then
+        echo -e "${red}ВНИМАНИЕ!${clear}"
+        echo "Для повышения безопасности сервера рекомендуется выполнить следующие действия:"
+        echo -e "1) Отключиться от сервера, нажав ${textcolor}Ctrl + D${clear}"
+        echo -e "2) Если нет ключей SSH, то сгенерировать их на своём ПК командой ${textcolor}ssh-keygen -t rsa -b 4096${clear}"
+        echo "3) Отправить публичный ключ на сервер"
+        echo -e "   Команда для Linux и macOS: ${textcolor}ssh-copy-id -p ${ssh_port} ${username}@${server_ip}${clear}"
+        echo -e "   Команда для Windows: ${textcolor}type \$env:USERPROFILE\.ssh\id_rsa.pub | ssh -p ${ssh_port} ${username}@${server_ip} \"cat >> ~/.ssh/authorized_keys\"${clear}"
+        echo -e "4) Подключиться к серверу ещё раз командой ${textcolor}ssh -p ${ssh_port} ${username}@${server_ip}${clear}"
+        echo -e "5) Отключить вход по паролю командой ${textcolor}sudo sed -i \"s/.*PasswordAuthentication yes.*/PasswordAuthentication no/g\" /etc/ssh/sshd_config${clear}"
+        echo -e "6) Перезапустить SSH командой ${textcolor}sudo systemctl restart ssh.service${clear}"
+    else
+        echo -e "${red}ВНИМАНИЕ!${clear}"
+        echo "Вы пропустили настройку безопасности, настоятельно рекомендуется выполнить её самостоятельно"
+        echo "При этом порты 443 и SSH нужно оставить открытыми для TCP"
+    fi
+    echo ""
+    echo -e "${red}ВАЖНО:${clear}"
+    echo -e "Для начала работы прокси может потребоваться перезагрузка сервера командой ${textcolor}sudo reboot${clear}"
+    if [[ "$variant" == "1" ]]
+    then
+        echo ""
+        echo -e "${textcolor}Конфиги для клиента доступны по ссылкам:${clear}"
+        echo "https://${domain}/${subspath}/${user_key}-TRJ-CLIENT.json"
+        echo "https://${domain}/${subspath}/${user_key}-VLESS-CLIENT.json"
+    else
+        echo "Чтобы этот вариант настройки работал, проксирование через CDN должно быть отключено"
+        echo ""
+        echo -e "${textcolor}Конфиг для клиента доступен по ссылке:${clear}"
+        echo "https://${domain}/${subspath}/${user_key}-TRJ-CLIENT.json"
+    fi
+    echo ""
+    echo -e "${textcolor}Страница выдачи подписок пользователей:${clear}"
+    echo "https://${domain}/${subspath}/sub.html"
+    echo -e "Ваше имя пользователя - ${textcolor}${user_key}${clear}"
+    echo ""
+    echo -e "Для вывода меню настроек используйте команду ${textcolor}ssb${clear}"
+    if [[ ! -f /etc/letsencrypt/live/${domain}/fullchain.pem ]]
+    then
+        echo ""
+        echo -e "${red}Ошибка: не удалось выпустить сертификат, введите команду \"ssb\" и выберите пункт 11 или 12${clear}"
+    fi
+    echo ""
+    echo ""
+}
+
+final_text_en() {
+    echo ""
+    echo ""
+    echo -e "${textcolor}If there are no errors above then the setup is complete! Save the text below!${clear}"
+    echo ""
+    if [[ "$ssh_ufw" != "2" ]]
+    then
+        echo -e "${red}ATTENTION!${clear}"
+        echo "To increase the security of the server it's recommended to do the following:"
+        echo -e "1) Disconnect from the server by pressing ${textcolor}Ctrl + D${clear}"
+        echo -e "2) If you don't have SSH keys then generate them on your PC (${textcolor}ssh-keygen -t rsa -b 4096${clear})"
+        echo "3) Send the public key to the server"
+        echo -e "   Command for Linux and macOS: ${textcolor}ssh-copy-id -p ${ssh_port} ${username}@${server_ip}${clear}"
+        echo -e "   Command for Windows: ${textcolor}type \$env:USERPROFILE\.ssh\id_rsa.pub | ssh -p ${ssh_port} ${username}@${server_ip} \"cat >> ~/.ssh/authorized_keys\"${clear}"
+        echo -e "4) Connect to the server again (${textcolor}ssh -p ${ssh_port} ${username}@${server_ip}${clear})"
+        echo -e "5) Disable password authentication (${textcolor}sudo sed -i \"s/.*PasswordAuthentication yes.*/PasswordAuthentication no/g\" /etc/ssh/sshd_config${clear})"
+        echo -e "6) Restart SSH (${textcolor}sudo systemctl restart ssh.service${clear})"
+    else
+        echo -e "${red}ATTENTION!${clear}"
+        echo "You have skipped security setup, it is highly recommended to configure it yourself"
+        echo "Ports 443 and SSH must be left open for TCP"
+    fi
+    echo ""
+    echo -e "${red}IMPORTANT:${clear}"
+    echo -e "It might be required to reboot the server for the proxy to start working (${textcolor}sudo reboot${clear})"
+    if [[ "$variant" == "1" ]]
+    then
+        echo ""
+        echo -e "${textcolor}Client configs are available here:${clear}"
+        echo "https://${domain}/${subspath}/${user_key}-TRJ-CLIENT.json"
+        echo "https://${domain}/${subspath}/${user_key}-VLESS-CLIENT.json"
+    else
+        echo "For this setup method to work, the traffic should not be proxied through CDN"
+        echo ""
+        echo -e "${textcolor}Client config is available here:${clear}"
+        echo "https://${domain}/${subspath}/${user_key}-TRJ-CLIENT.json"
+    fi
+    echo ""
+    echo -e "${textcolor}Subscription page:${clear}"
+    echo "https://${domain}/${subspath}/sub.html"
+    echo -e "Your username is ${textcolor}${user_key}${clear}"
+    echo ""
+    echo -e "To display the settings menu, run ${textcolor}ssb${clear} command"
+    if [[ ! -f /etc/letsencrypt/live/${domain}/fullchain.pem ]]
+    then
+        echo ""
+        echo -e "${red}Error: failed to issue the certificate, enter \"ssb\" command and select option 11 or 12${clear}"
+    fi
+    echo ""
+    echo ""
+}
+
+save_config() {
+    mkdir -p /etc/secret-sing-box
+    cat > /etc/secret-sing-box/config <<EOF
+server_location=${server_location}
+warp_option=${warp_option}
+warp_mode=${warp_mode}
+chain_role=${chain_role}
+middle_mode=${middle_mode}
+warp_installed_by_script=false
+warp_backend=
+usque_sni=
+usque_endpoint=
+usque_port=
+next_server_link=
+trjpass=${trjpass}
+trojanpath=${trojanpath}
+uuid=${uuid}
+vlesspath=${vlesspath}
+subspath=${subspath}
+rulesetpath=${rulesetpath}
+user_key=
+domain=${domain}
+variant=${variant}
+transport=${transport}
+validation_type=${validation_type}
+option=${option}
+ssh_ufw=${ssh_ufw}
+blacklist_setup=${blacklist_setup}
+EOF
+    chmod 600 /etc/secret-sing-box/config
+}
+
+check_os
+check_root
+check_sbmanager
+banner
+enter_language
+start_text_${language}
+get_ip
+enter_data_${language}
+enable_bbr
+install_packages
+save_config
+setup_general_security
+certificates
+setup_warp
+setup_sing_box
+setup_nginx
+setup_haproxy
+setup_crontab
+add_sbmanager
+add_sub_page
+final_text_${language}

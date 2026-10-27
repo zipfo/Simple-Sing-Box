@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ownCloud</title>
+    <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2Ij48cmVjdCB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgZmlsbD0iIzA0MWUzZCIgcng9IjEyIi8+PHBhdGggZmlsbD0iIzE3YTlkZiIgZD0iTTEyOCA4MGMtMTUgMC0yOCA3LTM3IDE4LTktMTEtMjItMTgtMzctMThDMjYgODAgMTIgOTQgMTIgMTA4czE0IDI4IDI4IDI4YzE1IDAgMjgtNyAzNy0xOCA5IDExIDIyIDE4IDM3IDE4czI4LTcgMzctMThjOSA5IDIyIDE4IDM3IDE4YzE0IDAgMjgtMTQgMjgtMjhjMC0xNC0xNC0yOC0yOC0yOHoiLz48L3N2Zz4=" type="image/svg+xml">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #041e3d;
+            background-image: 
+                radial-gradient(ellipse at 20% 50%, rgba(23, 169, 223, 0.15) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 20%, rgba(0, 201, 167, 0.1) 0%, transparent 50%),
+                radial-gradient(ellipse at 60% 80%, rgba(23, 169, 223, 0.08) 0%, transparent 50%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .wrapper {
+            width: 100%;
+            max-width: 360px;
+            padding: 20px;
+        }
+
+        .logo-container {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .logo {
+            width: 160px;
+            height: 60px;
+            margin: 0 auto 12px;
+        }
+
+        .tagline {
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.5);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .login-form {
+            background: rgba(255, 255, 255, 0.06);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-radius: 16px;
+            padding: 36px 32px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            font-size: 15px;
+            transition: all 0.2s ease;
+            outline: none;
+            color: #fff;
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .form-group input:focus {
+            border-color: #17a9df;
+            background: rgba(255, 255, 255, 0.1);
+            box-shadow: 0 0 0 3px rgba(23, 169, 223, 0.15);
+        }
+
+        .form-group input::placeholder {
+            color: rgba(255, 255, 255, 0.35);
+        }
+
+        .submit-btn {
+            width: 100%;
+            padding: 13px 20px;
+            background: linear-gradient(135deg, #17a9df 0%, #00c9a7 100%);
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .submit-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 20px rgba(23, 169, 223, 0.3);
+        }
+
+        .submit-btn:active {
+            transform: translateY(0);
+        }
+
+        .form-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 20px;
+        }
+
+        .remember-me {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.6);
+            cursor: pointer;
+        }
+
+        .remember-me input[type="checkbox"] {
+            accent-color: #17a9df;
+            width: 15px;
+            height: 15px;
+        }
+
+        .forgot-link {
+            color: #17a9df;
+            text-decoration: none;
+            font-size: 13px;
+        }
+
+        .forgot-link:hover {
+            text-decoration: underline;
+        }
+
+        .footer {
+            margin-top: 40px;
+            text-align: center;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.3);
+        }
+
+        .footer a {
+            color: rgba(255, 255, 255, 0.5);
+            text-decoration: none;
+        }
+
+        .footer a:hover {
+            text-decoration: underline;
+        }
+
+        @media (max-width: 480px) {
+            .wrapper {
+                padding: 16px;
+            }
+            
+            .login-form {
+                padding: 28px 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <div class="logo-container">
+            <svg class="logo" viewBox="0 0 200 55" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                    <linearGradient id="ocGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" style="stop-color:#17a9df"/>
+                        <stop offset="100%" style="stop-color:#00c9a7"/>
+                    </linearGradient>
+                </defs>
+                <!-- ownCloud cloud icon -->
+                <g transform="translate(5, 5)">
+                    <circle cx="16" cy="20" r="7" fill="url(#ocGrad)"/>
+                    <circle cx="28" cy="14" r="9" fill="url(#ocGrad)"/>
+                    <circle cx="40" cy="20" r="7" fill="url(#ocGrad)"/>
+                    <circle cx="28" cy="26" r="5" fill="url(#ocGrad)"/>
+                </g>
+                <!-- Text -->
+                <text x="55" y="24" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#fff">own</text>
+                <text x="55" y="42" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="url(#ocGrad)">Cloud</text>
+            </svg>
+            <div class="tagline">Your private cloud</div>
+        </div>
+
+        <form class="login-form" onsubmit="return false;">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" placeholder="Username" autocomplete="off" required>
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" placeholder="Password" required>
+            </div>
+
+            <button type="submit" class="submit-btn">Log in</button>
+
+            <div class="form-footer">
+                <label class="remember-me">
+                    <input type="checkbox">
+                    <span>Remember login</span>
+                </label>
+                <a href="#" class="forgot-link">Forgot password?</a>
+            </div>
+        </form>
+
+        <div class="footer">
+            <p><a href="#">Webmail</a> &middot; <a href="#">Documentation</a></p>
+            <p style="margin-top: 8px;">&copy; 2024 ownCloud GmbH</p>
+        </div>
+    </div>
+</body>
+</html>
