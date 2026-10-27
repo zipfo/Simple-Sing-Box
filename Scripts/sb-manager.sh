@@ -3847,8 +3847,8 @@ manage_blacklist() {
                 echo ""
                 main_menu
             fi
-            nft add set inet filter blacklist_v4 '{ type ipv4_addr; flags interval; }'
-            nft add set inet filter blacklist_v6 '{ type ipv6_addr; flags interval; }'
+            nft add set inet filter blacklist_v4 '{ type ipv4_addr; flags interval; auto-merge; }'
+            nft add set inet filter blacklist_v6 '{ type ipv6_addr; flags interval; auto-merge; }'
             # Add rules to input chain (before accept rules)
             local input_handle
             input_handle=$(nft -a list chain inet filter input 2>/dev/null | grep "ct state" | awk '{print $NF}')
@@ -3883,14 +3883,14 @@ manage_blacklist() {
         1)
         # Show status
         local v4_count=0 v6_count=0 last_update=""
-        v4_count=$(nft list set inet filter blacklist_v4 2>/dev/null | grep -c 'elements' || echo 0)
-        if [[ $v4_count -gt 0 ]]; then
-            v4_count=$(nft -j list set inet filter blacklist_v4 2>/dev/null | jq '.nftables[1].set.elem | length' 2>/dev/null || echo "?")
-        else
-            v4_count=0
-        fi
-        v6_count=$(nft -j list set inet filter blacklist_v6 2>/dev/null | jq '.nftables[1].set.elem | length' 2>/dev/null || echo "0")
-        last_update=$(tail -1 /var/log/blacklist-update.log 2>/dev/null | cut -d' ' -f1-2 || echo "N/A")
+        v4_count=$(nft -j list set inet filter blacklist_v4 2>/dev/null | jq -r '([.nftables[].set? | select(. != null and .elem != null) | .elem[]] | length) // 0' 2>/dev/null)
+        [[ ! "$v4_count" =~ ^[0-9]+$ ]] && v4_count=0
+
+        v6_count=$(nft -j list set inet filter blacklist_v6 2>/dev/null | jq -r '([.nftables[].set? | select(. != null and .elem != null) | .elem[]] | length) // 0' 2>/dev/null)
+        [[ ! "$v6_count" =~ ^[0-9]+$ ]] && v6_count=0
+
+        last_update=$(tail -1 /var/log/blacklist-update.log 2>/dev/null | cut -d' ' -f1-2)
+        [[ -z "$last_update" ]] && last_update="N/A"
 
         if [[ "$language" == "ru" ]]
         then

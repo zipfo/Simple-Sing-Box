@@ -1550,11 +1550,13 @@ table inet filter {
     set blacklist_v4 {
         type ipv4_addr
         flags interval
+        auto-merge
     }
 
     set blacklist_v6 {
         type ipv6_addr
         flags interval
+        auto-merge
     }
 }
 NFTCONF

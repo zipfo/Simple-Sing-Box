@@ -21,8 +21,25 @@ update_set() {
     # Skip if file is empty
     [[ ! -s "$tmp_file" ]] && { log "WARNING: empty file for $set_name"; rm -f "$tmp_file"; return 1; }
 
+    # Collapse overlapping subnets to guarantee successful loading into nftables interval sets
+    if command -v python3 &>/dev/null; then
+        python3 -c '
+import sys, ipaddress
+nets = []
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if line and not line.startswith("#"):
+        try: nets.append(ipaddress.ip_network(line))
+        except: pass
+collapsed = list(ipaddress.collapse_addresses(nets))
+with open(sys.argv[1], "w") as f:
+    for n in collapsed:
+        f.write(f"{n}\n")
+' "$tmp_file" 2>/dev/null || true
+    fi
+
     local count
-    count=$(grep -c '.' "$tmp_file")
+    count=$(grep -c '.' "$tmp_file" 2>/dev/null || echo 0)
 
     # Flush set and reload
     nft flush set inet filter "$set_name" 2>/dev/null || { log "ERROR: set $set_name not found"; rm -f "$tmp_file"; return 1; }
