@@ -3892,18 +3892,38 @@ manage_blacklist() {
         last_update=$(tail -1 /var/log/blacklist-update.log 2>/dev/null | cut -d' ' -f1-2)
         [[ -z "$last_update" ]] && last_update="N/A"
 
+        # Check kernel drop rule & stats
+        if ! nft list chain inet filter input 2>/dev/null | grep -q "@blacklist_v4.*drop"; then
+            local input_handle
+            input_handle=$(nft -a list chain inet filter input 2>/dev/null | grep "ct state" | awk '{print $NF}')
+            if [[ -n $input_handle ]]; then
+                nft insert rule inet filter input position "$input_handle" ip saddr @blacklist_v4 counter drop 2>/dev/null || true
+                nft insert rule inet filter input position "$input_handle" ip6 saddr @blacklist_v6 counter drop 2>/dev/null || true
+            fi
+        fi
+
+        local dropped_pkts="0" rule_status_ru="Не активна" rule_status_en="Inactive"
+        if nft list chain inet filter input 2>/dev/null | grep -q "@blacklist_v4.*drop"; then
+            dropped_pkts=$(nft list chain inet filter input 2>/dev/null | grep "@blacklist_v4" | grep -oE 'packets [0-9]+' | awk '{print $2}')
+            [[ -z "$dropped_pkts" ]] && dropped_pkts="0"
+            rule_status_ru="Активна (сброшено пакетов: ${dropped_pkts})"
+            rule_status_en="Active (${dropped_pkts} packets dropped)"
+        fi
+
         if [[ "$language" == "ru" ]]
         then
             echo ""
             echo -e "${textcolor}Статус blacklist:${clear}"
             echo "  IPv4 подсетей: ${v4_count}"
             echo "  IPv6 подсетей: ${v6_count}"
+            echo "  Фильтрация ядра: ${rule_status_ru}"
             echo "  Последнее обновление: ${last_update}"
         else
             echo ""
             echo -e "${textcolor}Blacklist status:${clear}"
             echo "  IPv4 subnets: ${v4_count}"
             echo "  IPv6 subnets: ${v6_count}"
+            echo "  Kernel filtering: ${rule_status_en}"
             echo "  Last update: ${last_update}"
         fi
         echo ""
