@@ -206,12 +206,6 @@ WARP traffic is carried by [usque](https://github.com/Diniboy1123/usque) over **
 | **Existing server update** | Migrated to usque; if the connection test fails, the updater rolls back to warp-cli |
 | **WARP Management** (`ssb` → 9) | Status · endpoint re-scan · connection test · legacy warp-cli removal |
 
-> [!WARNING]
-> **WARP+ license keys** are supported only by the legacy warp-cli backend. If your server fell back to warp-cli, activate a key with:
-> ```
-> warp-cli registration license CMD5m479-Y5hS6y79-U06c5mq9
-> ```
-
 ---
 
 ## 🗺️ Routing Modes

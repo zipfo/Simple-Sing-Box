@@ -3934,7 +3934,7 @@ update_ssb() {
 
     if [[ $update_script =~ '#!/bin/bash' ]]
     then
-        export version language
+        export version language INSTALLED_VERSION
         export -f get_ip templates load_ssb_config get_data check_users check_github_template get_pass edit_configs_loop add_rule_sets_loop sync_client_configs_main
         bash <(echo "${update_script}")
         exit 0
@@ -4447,6 +4447,14 @@ main_menu() {
 if [[ "$1" == "--apply-routes" ]]; then
     check_config_json
     apply_user_routing
+    exit 0
+fi
+
+if [[ "$1" == "--update" ]]; then
+    check_root
+    check_config_json
+    get_data
+    update_ssb
     exit 0
 fi
 

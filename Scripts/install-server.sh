@@ -28,10 +28,49 @@ check_root() {
 check_sbmanager() {
     if [[ -f /usr/local/bin/sbmanager ]]
     then
+        local installed_version
+        installed_version=$(grep '^version=' /usr/local/bin/sbmanager 2>/dev/null | head -n 1 | cut -d'"' -f2)
+        [[ -z $installed_version ]] && installed_version="unknown"
+
+        local lang="en"
+        if grep -q 'html lang="ru"' /var/www/*/sub.html 2>/dev/null; then
+            lang="ru"
+        elif [[ -f /etc/secret-sing-box/config ]]; then
+            source /etc/secret-sing-box/config 2>/dev/null
+            [[ "$language" == "ru" ]] && lang="ru"
+        fi
+
         echo ""
-        echo -e "${red}Error: the script has already been run, no need to run it again${clear}"
-        echo ""
-        exit 1
+        if [[ "$lang" == "ru" ]]; then
+            echo -e "${textcolor}╔══════════════════════════════════════════════════════════════════════╗${clear}"
+            echo -e "${textcolor}║  Обнаружена существующая установка SSB (v${installed_version})                      ║${clear}"
+            echo -e "${textcolor}╚══════════════════════════════════════════════════════════════════════╝${clear}"
+            echo ""
+            echo -e "${textcolor}[?]${clear} Обновить сервер до актуальной версии Simple-Sing-Box? (${textcolor}Enter${clear} — да, ${textcolor}x${clear} — отмена):"
+        else
+            echo -e "${textcolor}╔══════════════════════════════════════════════════════════════════════╗${clear}"
+            echo -e "${textcolor}║  Existing SSB installation detected (v${installed_version})                         ║${clear}"
+            echo -e "${textcolor}╚══════════════════════════════════════════════════════════════════════╝${clear}"
+            echo ""
+            echo -e "${textcolor}[?]${clear} Update server to the latest Simple-Sing-Box version? (${textcolor}Enter${clear} — yes, ${textcolor}x${clear} — cancel):"
+        fi
+
+        read -r do_update
+        [[ -n $do_update ]] && echo ""
+
+        if [[ "$do_update" != "x" ]]; then
+            if [[ "$lang" == "ru" ]]; then
+                echo -e "${textcolor_light}Загрузка актуального менеджера и запуск обновления...${clear}"
+            else
+                echo -e "${textcolor_light}Downloading latest manager and launching update...${clear}"
+            fi
+            wget -q -O /usr/local/bin/sbmanager https://raw.githubusercontent.com/zipfo/Simple-Sing-Box/main/Scripts/sb-manager.sh
+            chmod +x /usr/local/bin/sbmanager
+            export INSTALLED_VERSION="$installed_version"
+            exec /usr/local/bin/sbmanager --update
+        fi
+
+        exit 0
     fi
 }
 

@@ -39,6 +39,7 @@ check_update() {
 
     [[ ! $language =~ ^[a-z]+$ ]] && language="ru"   # Legacy
     new_version="1.6.0"
+    [[ -n $INSTALLED_VERSION ]] && version="$INSTALLED_VERSION"
 
     if [[ "$version" == "$new_version" ]]
     then
