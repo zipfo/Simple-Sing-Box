@@ -1579,8 +1579,8 @@ add_outbound_by_interface() {
     aoi_msgs[iface_prompt_en]="${textcolor}[?]${clear} Enter network interface name (e.g., wg0, tun0, tailscale0) or x to cancel:"
     aoi_msgs[tag_prompt_ru]="${textcolor}[?]${clear} Введите тег для outbound [нажмите Enter для %s]:"
     aoi_msgs[tag_prompt_en]="${textcolor}[?]${clear} Enter tag for outbound [press Enter for %s]:"
-    aoi_msgs[warn_iface_ru]="${yellow}Внимание: интерфейс '%s' не обнаружен в системе (ip link). Продолжить? [y/N]:${clear}"
-    aoi_msgs[warn_iface_en]="${yellow}Warning: interface '%s' not found on system (ip link). Continue anyway? [y/N]:${clear}"
+    aoi_msgs[warn_iface_ru]="${textcolor_light}Внимание: интерфейс '%s' не обнаружен в системе (ip link). Продолжить? [y/N]:${clear}"
+    aoi_msgs[warn_iface_en]="${textcolor_light}Warning: interface '%s' not found on system (ip link). Continue anyway? [y/N]:${clear}"
     aoi_msgs[err_exists_ru]="${red}Ошибка: outbound с таким тегом уже существует${clear}"
     aoi_msgs[err_exists_en]="${red}Error: an outbound with this tag already exists${clear}"
     aoi_msgs[success_ru]="Интерфейс-outbound ${textcolor}%s${clear} успешно добавлен на сервер!"
@@ -1738,8 +1738,8 @@ delete_custom_outbound() {
     dco_msgs[no_custom_en]="No custom outbounds available to delete"
     dco_msgs[prompt_ru]="${textcolor}[?]${clear} Выберите outbound для удаления или 0 для отмены:"
     dco_msgs[prompt_en]="${textcolor}[?]${clear} Select an outbound to delete or 0 to cancel:"
-    dco_msgs[warn_users_ru]="${yellow}Внимание: следующие пользователи используют outbound '%s':\n%s\nИх выходная нода будет переключена на 'direct'. Продолжить? [y/N]:${clear}"
-    dco_msgs[warn_users_en]="${yellow}Warning: the following users are using outbound '%s':\n%s\nTheir outbound node will be reverted to 'direct'. Continue? [y/N]:${clear}"
+    dco_msgs[warn_users_ru]="${textcolor_light}Внимание: следующие пользователи используют outbound '%s':\n%s\nИх выходная нода будет переключена на 'direct'. Продолжить? [y/N]:${clear}"
+    dco_msgs[warn_users_en]="${textcolor_light}Warning: the following users are using outbound '%s':\n%s\nTheir outbound node will be reverted to 'direct'. Continue? [y/N]:${clear}"
     dco_msgs[success_ru]="Outbound ${textcolor}%s${clear} успешно удалён"
     dco_msgs[success_en]="Outbound ${textcolor}%s${clear} successfully deleted"
 
@@ -2950,17 +2950,33 @@ warp_migrate_to_usque() {
     systemctl enable usque-warp.service > /dev/null 2>&1
     systemctl restart usque-warp.service > /dev/null 2>&1
 
-    if ! usque_wait_ready
+    # Wait for the SOCKS5 port to come up (hard requirement)
+    local i port_up=0
+    for i in {1..30}
+    do
+        ss -ltn 2>/dev/null | grep -q "127.0.0.1:40000" && { port_up=1; break; }
+        sleep 1
+    done
+
+    if [[ $port_up -eq 0 ]]
     then
         [[ "$language" == "ru" ]] \
-            && echo -e "${red}usque запустился, но WARP-соединение не прошло проверку${clear}" \
-            || echo -e "${red}usque started but WARP connectivity check failed${clear}"
+            && echo -e "${red}usque не запустился: порт 40000 не поднялся за 30 секунд${clear}" \
+            || echo -e "${red}usque failed to start: port 40000 did not come up within 30 seconds${clear}"
         journalctl -u usque-warp.service -n 20 --no-pager 2>/dev/null
         echo ""
         set_ssb_config_value warp_backend warp-cli
         warp_backend="warp-cli"
         return 1
     fi
+
+    # Try WARP connectivity test — non-fatal: some networks block the curl probe
+    local conn_ok=0
+    for i in {1..3}
+    do
+        warp_test_socks && { conn_ok=1; break; }
+        sleep 3
+    done
 
     set_ssb_config_value warp_backend usque
     set_ssb_config_value usque_sni      "$usque_sni"
@@ -2976,10 +2992,22 @@ warp_migrate_to_usque() {
     if [[ "$language" == "ru" ]]
     then
         echo -e "${textcolor_light}WARP переведён на usque. Endpoint: ${usque_endpoint}${usque_sni:+, SNI: ${usque_sni}}${clear}"
-        echo -e "${textcolor}[?]${clear} WARP теперь работает через usque (MASQUE HTTP/2). Старый warp-cli можно удалить через пункт 4."
+        if [[ $conn_ok -eq 0 ]]
+        then
+            echo -e "${red}Проверка соединения через SOCKS5 не прошла — usque запущен, но WARP-туннель может быть нестабилен.${clear}"
+            echo -e "${red}Проверьте соединение через пункт 3. При необходимости повторите миграцию (пункт 5).${clear}"
+        else
+            echo -e "${textcolor}[?]${clear} WARP теперь работает через usque (MASQUE HTTP/2). Старый warp-cli можно удалить через пункт 4."
+        fi
     else
         echo -e "${textcolor_light}WARP has been migrated to usque. Endpoint: ${usque_endpoint}${usque_sni:+, SNI: ${usque_sni}}${clear}"
-        echo -e "${textcolor}[?]${clear} WARP now runs through usque (MASQUE HTTP/2). The legacy warp-cli can be removed via option 4."
+        if [[ $conn_ok -eq 0 ]]
+        then
+            echo -e "${red}SOCKS5 connectivity test failed — usque is running but the WARP tunnel may be unstable.${clear}"
+            echo -e "${red}Check the connection via option 3. If needed, retry migration via option 5.${clear}"
+        else
+            echo -e "${textcolor}[?]${clear} WARP now runs through usque (MASQUE HTTP/2). The legacy warp-cli can be removed via option 4."
+        fi
     fi
     echo ""
     return 0
