@@ -2627,9 +2627,9 @@ warp_rescan() {
     then
         if [[ "$language" == "ru" ]]
         then
-            echo -e "${red}WARP ещё не переведён на usque. Сначала выполните обновление через меню (пункт «Обновить»).${clear}"
+            echo -e "${red}WARP ещё не переведён на usque. Используйте пункт 5 для миграции.${clear}"
         else
-            echo -e "${red}WARP has not been migrated to usque yet. Run the update from the menu first.${clear}"
+            echo -e "${red}WARP has not been migrated to usque yet. Use option 5 to migrate.${clear}"
         fi
         echo ""
         return 1
@@ -2721,9 +2721,9 @@ warp_remove_legacy() {
     then
         if [[ "$language" == "ru" ]]
         then
-            echo -e "${red}Сначала переведите WARP на usque (обновление через меню)${clear}"
+            echo -e "${red}Сначала переведите WARP на usque (пункт 5 в этом меню)${clear}"
         else
-            echo -e "${red}Migrate WARP to usque first (run the update from the menu)${clear}"
+            echo -e "${red}Migrate WARP to usque first (option 5 in this menu)${clear}"
         fi
         echo ""
         return 1
@@ -2770,6 +2770,202 @@ warp_remove_legacy() {
     return 0
 }
 
+warp_migrate_to_usque() {
+    if [[ "${warp_option:-}" != "1" ]]
+    then
+        [[ "$language" == "ru" ]] \
+            && echo -e "${red}WARP не включён на этом сервере${clear}" \
+            || echo -e "${red}WARP is not enabled on this server${clear}"
+        echo ""
+        return 1
+    fi
+
+    if ! jq -e 'any(.outbounds[]; .tag == "warp")' /etc/sing-box/config.json > /dev/null 2>&1
+    then
+        [[ "$language" == "ru" ]] \
+            && echo -e "${red}WARP outbound не найден в конфиге sing-box${clear}" \
+            || echo -e "${red}WARP outbound not found in sing-box config${clear}"
+        echo ""
+        return 1
+    fi
+
+    if [[ "${warp_backend:-}" == "usque" ]]
+    then
+        if ! command -v usque > /dev/null 2>&1 || ! command -v warpscout > /dev/null 2>&1
+        then
+            [[ "$language" == "ru" ]] \
+                && echo -e "${red}usque или warpscout не установлены — требуется переустановка через обновление${clear}" \
+                || echo -e "${red}usque or warpscout not installed — reinstall via update required${clear}"
+            echo ""
+            return 1
+        fi
+        [[ "$language" == "ru" ]] \
+            && echo -e "${textcolor_light}WARP уже работает на usque. Для смены endpoint используйте пункт 2.${clear}" \
+            || echo -e "${textcolor_light}WARP is already running on usque. Use option 2 to re-scan the endpoint.${clear}"
+        echo ""
+        return 0
+    fi
+
+    if [[ "$language" == "ru" ]]
+    then
+        echo -e "${textcolor_light}Перевод WARP на usque (MASQUE HTTP/2 поверх TCP)...${clear}"
+        echo -e "${textcolor_light}Это может занять несколько минут${clear}"
+    else
+        echo -e "${textcolor_light}Migrating WARP to usque (MASQUE HTTP/2 over TCP)...${clear}"
+        echo -e "${textcolor_light}This may take a few minutes${clear}"
+    fi
+
+    local usque_arch warpscout_arch usque_tag usque_version
+    usque_release_arch() {
+        case "$(uname -m)" in
+            x86_64)  echo "amd64" ;;
+            aarch64) echo "arm64" ;;
+            armv7l)  echo "armv7" ;;
+            *)       echo "" ;;
+        esac
+    }
+
+    usque_arch=$(usque_release_arch)
+    warpscout_arch="$usque_arch"
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    trap 'rm -rf "$tmp_dir"' RETURN
+
+    if [[ -z $usque_arch ]]
+    then
+        [[ "$language" == "ru" ]] \
+            && echo -e "${red}Архитектура $(uname -m) не поддерживается usque/warpscout${clear}" \
+            || echo -e "${red}Architecture $(uname -m) is not supported by usque/warpscout${clear}"
+        echo ""
+        return 1
+    fi
+
+    # Download usque
+    usque_tag=$(curl -fsSL --retry 3 https://api.github.com/repos/Diniboy1123/usque/releases/latest | jq -r '.tag_name // empty')
+    if [[ -z $usque_tag ]]
+    then
+        [[ "$language" == "ru" ]] \
+            && echo -e "${red}Не удалось получить последнюю версию usque с GitHub${clear}" \
+            || echo -e "${red}Could not fetch the latest usque release from GitHub${clear}"
+        echo ""
+        return 1
+    fi
+    usque_version=${usque_tag#v}
+
+    if ! curl -fsSL --retry 3 -o "$tmp_dir/usque.zip" \
+            "https://github.com/Diniboy1123/usque/releases/download/${usque_tag}/usque_${usque_version}_linux_${usque_arch}.zip" ||
+       ! curl -fsSL --retry 3 -o "$tmp_dir/checksums.txt" \
+            "https://github.com/Diniboy1123/usque/releases/download/${usque_tag}/checksums.txt"
+    then
+        [[ "$language" == "ru" ]] \
+            && echo -e "${red}Не удалось скачать usque ${usque_version}${clear}" \
+            || echo -e "${red}Failed to download usque ${usque_version}${clear}"
+        echo ""
+        return 1
+    fi
+
+    local expected_sum actual_sum
+    expected_sum=$(grep " usque_${usque_version}_linux_${usque_arch}.zip$" "$tmp_dir/checksums.txt" | awk '{print $1}')
+    actual_sum=$(sha256sum "$tmp_dir/usque.zip" | awk '{print $1}')
+    if [[ "$expected_sum" != "$actual_sum" ]]
+    then
+        [[ "$language" == "ru" ]] \
+            && echo -e "${red}Проверка контрольной суммы usque не пройдена${clear}" \
+            || echo -e "${red}usque checksum verification failed${clear}"
+        echo ""
+        return 1
+    fi
+
+    if ! unzip -o -q "$tmp_dir/usque.zip" -d "$tmp_dir"
+    then
+        [[ "$language" == "ru" ]] \
+            && echo -e "${red}Не удалось распаковать usque${clear}" \
+            || echo -e "${red}Failed to unzip usque${clear}"
+        echo ""
+        return 1
+    fi
+
+    # Download warpscout
+    local warpscout_tag warpscout_version
+    warpscout_tag=$(curl -fsSL --retry 3 https://api.github.com/repos/Diniboy1123/warpscout/releases/latest | jq -r '.tag_name // empty')
+    if [[ -z $warpscout_tag ]]
+    then
+        [[ "$language" == "ru" ]] \
+            && echo -e "${red}Не удалось получить версию warpscout${clear}" \
+            || echo -e "${red}Could not fetch the latest warpscout release${clear}"
+        echo ""
+        return 1
+    fi
+    warpscout_version=${warpscout_tag#v}
+
+    if ! curl -fsSL --retry 3 -o "$tmp_dir/warpscout" \
+            "https://github.com/Diniboy1123/warpscout/releases/download/${warpscout_tag}/warpscout_${warpscout_version}_linux_${warpscout_arch}"
+    then
+        [[ "$language" == "ru" ]] \
+            && echo -e "${red}Не удалось скачать warpscout${clear}" \
+            || echo -e "${red}Failed to download warpscout${clear}"
+        echo ""
+        return 1
+    fi
+
+    if ! install -m 755 "$tmp_dir/warpscout" /usr/local/bin/warpscout ||
+       ! install -m 755 "$tmp_dir/usque"     /usr/local/bin/usque
+    then
+        [[ "$language" == "ru" ]] \
+            && echo -e "${red}Не удалось установить usque/warpscout${clear}" \
+            || echo -e "${red}Failed to install usque/warpscout${clear}"
+        echo ""
+        return 1
+    fi
+
+    # Register account and scan endpoint
+    if ! usque_register_account || ! usque_scan_endpoint
+    then
+        [[ "$language" == "ru" ]] \
+            && echo -e "${red}Не удалось подготовить usque — WARP остаётся на текущем бэкенде${clear}" \
+            || echo -e "${red}Could not prepare usque — WARP stays on the current backend${clear}"
+        echo ""
+        set_ssb_config_value warp_backend warp-cli
+        return 1
+    fi
+
+    usque_write_service
+    systemctl daemon-reload
+    systemctl enable usque-warp.service > /dev/null 2>&1
+    systemctl restart usque-warp.service > /dev/null 2>&1
+
+    if ! usque_wait_ready
+    then
+        [[ "$language" == "ru" ]] \
+            && echo -e "${red}usque запустился, но WARP-соединение не прошло проверку${clear}" \
+            || echo -e "${red}usque started but WARP connectivity check failed${clear}"
+        journalctl -u usque-warp.service -n 20 --no-pager 2>/dev/null
+        echo ""
+        set_ssb_config_value warp_backend warp-cli
+        return 1
+    fi
+
+    set_ssb_config_value warp_backend usque
+    set_ssb_config_value usque_sni      "$usque_sni"
+    set_ssb_config_value usque_endpoint "$usque_endpoint"
+    set_ssb_config_value usque_port     "$usque_port"
+
+    # Disable legacy warp-svc if it was running
+    systemctl stop    warp-svc.service > /dev/null 2>&1 || true
+    systemctl disable warp-svc.service > /dev/null 2>&1 || true
+
+    if [[ "$language" == "ru" ]]
+    then
+        echo -e "${textcolor_light}WARP переведён на usque. Endpoint: ${usque_endpoint}${usque_sni:+, SNI: ${usque_sni}}${clear}"
+        echo -e "${textcolor}[?]${clear} WARP теперь работает через usque (MASQUE HTTP/2). Старый warp-cli можно удалить через пункт 4."
+    else
+        echo -e "${textcolor_light}WARP has been migrated to usque. Endpoint: ${usque_endpoint}${usque_sni:+, SNI: ${usque_sni}}${clear}"
+        echo -e "${textcolor}[?]${clear} WARP now runs through usque (MASQUE HTTP/2). The legacy warp-cli can be removed via option 4."
+    fi
+    echo ""
+    return 0
+}
+
 warp_menu_text_ru() {
     echo ""
     echo -e "${textcolor}Управление WARP:${clear}"
@@ -2778,6 +2974,7 @@ warp_menu_text_ru() {
     echo "2 - Пересканировать endpoint (warpscout)"
     echo "3 - Проверить соединение"
     echo "4 - Удалить неиспользуемый warp-cli"
+    echo "5 - Мигрировать WARP на usque (выполнить/повторить)"
     read -r warp_suboption
     [[ -n $warp_suboption ]] && echo ""
 }
@@ -2790,6 +2987,7 @@ warp_menu_text_en() {
     echo "2 - Re-scan endpoint (warpscout)"
     echo "3 - Test connection"
     echo "4 - Remove the unused warp-cli"
+    echo "5 - Migrate WARP to usque (run / retry)"
     read -r warp_suboption
     [[ -n $warp_suboption ]] && echo ""
 }
@@ -2812,6 +3010,10 @@ warp_menu() {
         ;;
         4)
         warp_remove_legacy
+        warp_menu
+        ;;
+        5)
+        warp_migrate_to_usque
         warp_menu
         ;;
         *)

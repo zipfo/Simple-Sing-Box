@@ -661,11 +661,8 @@ migrate_warp_backend() {
         return $?
     fi
 
-    if ! warp_cli_installed
-    then
-        return 0
-    fi
-
+    # Attempt migration regardless of whether warp-cli is still installed;
+    # the binary may have been removed manually while warp_backend still reads "warp-cli".
     migrate_legacy_to_usque
     return $?
 }
