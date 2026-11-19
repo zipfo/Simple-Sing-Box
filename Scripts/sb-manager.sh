@@ -2887,7 +2887,7 @@ warp_migrate_to_usque() {
 
     # Download warpscout
     local warpscout_tag warpscout_version
-    warpscout_tag=$(curl -fsSL --retry 3 https://api.github.com/repos/Diniboy1123/warpscout/releases/latest | jq -r '.tag_name // empty')
+    warpscout_tag=$(curl -fsSL --retry 3 https://api.github.com/repos/vernette/warpscout/releases/latest | jq -r '.tag_name // empty')
     if [[ -z $warpscout_tag ]]
     then
         [[ "$language" == "ru" ]] \
@@ -2898,12 +2898,13 @@ warp_migrate_to_usque() {
     fi
     warpscout_version=${warpscout_tag#v}
 
-    if ! curl -fsSL --retry 3 -o "$tmp_dir/warpscout" \
-            "https://github.com/Diniboy1123/warpscout/releases/download/${warpscout_tag}/warpscout_${warpscout_version}_linux_${warpscout_arch}"
+    if ! curl -fsSL --retry 3 -o "$tmp_dir/warpscout.tar.gz" \
+            "https://github.com/vernette/warpscout/releases/download/${warpscout_tag}/warpscout_${warpscout_version}_linux_${warpscout_arch}.tar.gz" ||
+       ! tar -xzf "$tmp_dir/warpscout.tar.gz" -C "$tmp_dir" warpscout
     then
         [[ "$language" == "ru" ]] \
-            && echo -e "${red}Не удалось скачать warpscout${clear}" \
-            || echo -e "${red}Failed to download warpscout${clear}"
+            && echo -e "${red}Не удалось скачать или распаковать warpscout${clear}" \
+            || echo -e "${red}Failed to download or unpack warpscout${clear}"
         echo ""
         return 1
     fi
