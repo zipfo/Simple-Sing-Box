@@ -2526,6 +2526,21 @@ warp_status() {
         return 0
     fi
 
+    # Re-read runtime config to get the current backend (may have changed during this session)
+    local cfg_file="/etc/secret-sing-box/config"
+    if [[ -f "$cfg_file" ]]
+    then
+        local _b _se _sep _sp
+        _b=$(  grep  "^warp_backend="   "$cfg_file" | cut -d= -f2-)
+        _se=$( grep  "^usque_endpoint=" "$cfg_file" | cut -d= -f2-)
+        _sp=$( grep  "^usque_port="     "$cfg_file" | cut -d= -f2-)
+        _ss=$( grep  "^usque_sni="      "$cfg_file" | cut -d= -f2-)
+        [[ -n $_b  ]] && warp_backend="$_b"
+        [[ -n $_se ]] && usque_endpoint="$_se"
+        [[ -n $_sp ]] && usque_port="$_sp"
+        [[ -n $_ss ]] && usque_sni="$_ss"
+    fi
+
     local backend="${warp_backend:-warp-cli}"
     local service_name="warp-svc.service"
     local service_state listener
@@ -2943,6 +2958,7 @@ warp_migrate_to_usque() {
         journalctl -u usque-warp.service -n 20 --no-pager 2>/dev/null
         echo ""
         set_ssb_config_value warp_backend warp-cli
+        warp_backend="warp-cli"
         return 1
     fi
 
@@ -2950,6 +2966,8 @@ warp_migrate_to_usque() {
     set_ssb_config_value usque_sni      "$usque_sni"
     set_ssb_config_value usque_endpoint "$usque_endpoint"
     set_ssb_config_value usque_port     "$usque_port"
+    # Update in-memory variables so warp_status() reflects the new state immediately
+    warp_backend="usque"
 
     # Disable legacy warp-svc if it was running
     systemctl stop    warp-svc.service > /dev/null 2>&1 || true
